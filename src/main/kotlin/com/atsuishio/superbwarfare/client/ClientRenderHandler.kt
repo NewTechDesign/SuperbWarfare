@@ -19,6 +19,7 @@ import com.atsuishio.superbwarfare.client.renderer.block.*
 import com.atsuishio.superbwarfare.client.renderer.curio.ParachuteRenderer
 import com.atsuishio.superbwarfare.client.renderer.curio.ThermalImagingGogglesRenderer
 import com.atsuishio.superbwarfare.client.renderer.projectile.ReforgingGravityBallRenderer
+import com.atsuishio.superbwarfare.client.renderer.special.NuclearExplosionRenderer
 import com.atsuishio.superbwarfare.client.renderer.special.RadiationGlowRenderer
 import com.atsuishio.superbwarfare.client.tooltip.*
 import com.atsuishio.superbwarfare.client.tooltip.component.*
@@ -54,9 +55,15 @@ import kotlin.math.min
 object ClientRenderHandler {
 
     @SubscribeEvent
+    fun registerPerkHudRules(event: RegisterClientReloadListenersEvent) {
+        PerkOverlay.registerReloadListener(event)
+    }
+
+    @SubscribeEvent
     fun registerGravityLensingShader(event: RegisterShadersEvent) {
         ReforgingGravityBallRenderer.registerLensingShader(event)
         GunMuzzleLightRenderer.onRegisterShaders(event)
+        NuclearExplosionRenderer.registerShader(event)
     }
 
     /** [bulletRenderOffset] 的采样时刻（`System.nanoTime()`），超过 [OFFSET_TTL] 就当它过期 */
@@ -260,6 +267,7 @@ object ClientRenderHandler {
         event.registerBlockEntityRenderer(ModBlockEntities.RESONANCE_BASE.get()) { _ -> ResonanceBaseBlockEntityRenderer() }
         event.registerBlockEntityRenderer(ModBlockEntities.BOOBY_TRAP.get()) { _ -> BoobyTrapBlockEntityRenderer() }
         event.registerBlockEntityRenderer(ModBlockEntities.ITEM_DISPLAY_BOARD.get()) { _ -> ItemDisplayBoardBlockEntityRenderer() }
+        event.registerBlockEntityRenderer(ModBlockEntities.SHELF.get()) { _ -> ShelfBlockEntityRenderer() }
     }
 
     @SubscribeEvent
@@ -287,6 +295,7 @@ object ClientRenderHandler {
         event.registerBelowAll(AmmoCountOverlay.ID, AmmoCountOverlay)
         event.registerBelowAll(CrossHairOverlay.ID, CrossHairOverlay)
         event.registerBelowAll(InvisibleBladeChargeOverlay.ID, InvisibleBladeChargeOverlay)
+        event.registerBelowAll(PerkOverlay.ID, PerkOverlay)
         event.registerBelowAll(HeatBarOverlay.ID, HeatBarOverlay)
         event.registerBelowAll(BayonetChargeOverlay.ID, BayonetChargeOverlay)
         event.registerAbove(Mod.loc(CrossHairOverlay.ID), GunShieldOverlay.ID, GunShieldOverlay)

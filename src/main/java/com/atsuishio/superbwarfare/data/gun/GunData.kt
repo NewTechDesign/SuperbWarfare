@@ -7,6 +7,8 @@ import com.atsuishio.superbwarfare.data.attachment.AttachmentDefinition
 import com.atsuishio.superbwarfare.data.attachment.AttachmentSlots
 import com.atsuishio.superbwarfare.data.attachment.AttachmentZoom
 import com.atsuishio.superbwarfare.data.attachment.AvailableAttachments
+import com.atsuishio.superbwarfare.data.attachment.AttachmentLightState
+import com.atsuishio.superbwarfare.data.attachment.FlashlightMode
 import com.atsuishio.superbwarfare.data.gun.GunData.Companion.BACKUP_AMMO_CACHE_TICKS
 import com.atsuishio.superbwarfare.data.gun.GunData.Companion.DATA_VERSION
 import com.atsuishio.superbwarfare.data.gun.GunData.Companion.from
@@ -55,6 +57,7 @@ import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.util.Mth
 import net.minecraft.world.entity.Entity
+import net.minecraft.world.entity.ai.attributes.Attributes
 import net.minecraft.world.entity.player.Player
 import net.minecraft.world.item.Item
 import net.minecraft.world.item.ItemStack
@@ -65,6 +68,7 @@ import net.minecraftforge.items.IItemHandler
 import net.minecraftforge.registries.RegistryManager
 import java.util.*
 import java.util.function.Function
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
@@ -496,7 +500,12 @@ class GunData private constructor(
                     attachmentJsonPropModifier.update(option.override)
                     attachmentJsonPropModifier.modifyProperty(pmcInstance)
                 }
-                instance.definition.modifyProperty(pmcInstance)
+                // 激光/手电关闭时，这件带激光的配件只保留 Weight 修改（见 AttachmentDefinition.modifyProperty）。
+                // 档位按**槽位**独立读取，同一把枪上多件发光配件互不影响。
+                val lightMode = AttachmentLightState.modeOf(this, instance.slot)
+                val includeNonWeight = instance.definition.laser == null ||
+                    lightMode == FlashlightMode.LASER
+                instance.definition.modifyProperty(pmcInstance, includeNonWeight)
             }
 
             // 3.5 某些槽位装上配件后，换弹方式按数据覆写（如装了瞄准镜就无法用弹夹装填）
@@ -1383,6 +1392,33 @@ class GunData private constructor(
 
     /** 近战基础距离：`player.getEntityReach()` 由调用方加上 */
     fun meleeRange(): Double = get(GunProp.MELEE_RANGE)
+
+    internal class MeleeSwingTiming(val duration: Int, val hitTicks: IntArray)
+
+    internal fun meleeSwingTiming(player: Player, index: Int, chargeStrike: Boolean, releaseStrike: Boolean): MeleeSwingTiming? {
+        val action = resolveMeleeAction(index)
+        val source = meleeActions()[index]
+        val charge = if (chargeStrike) get(GunProp.BAYONET_CHARGE) else null
+        val rpmMultiplier = get(GunProp.RPM_MULTIPLIER)
+        val weaponSpeed = if (rpmMultiplier.isFinite()) rpmMultiplier.coerceAtLeast(0.0) else 1.0
+        val playerSpeed = (player.getAttributeValue(Attributes.ATTACK_SPEED) / 4.0).coerceIn(1.0, 4.0)
+        val speed = if (chargeStrike) 1.0 else playerSpeed * weaponSpeed
+        if (speed <= 0.0) return null
+
+        fun scaledTicks(ticks: Int): Int = if (ticks <= 0) 0 else ceil(ticks / speed).toInt().coerceAtLeast(1)
+
+        val rawDuration = if (releaseStrike) source.releaseDuration ?: action.duration
+        else charge?.strikeDuration?.takeIf { it > 0 } ?: action.duration
+        val duration = scaledTicks(rawDuration).coerceAtLeast(1)
+        val chargeHitTime = charge?.strikeHitTime?.takeIf { it >= 0 }
+        val hitTimes = when {
+            releaseStrike -> source.releaseHitTime?.list?.takeIf { it.isNotEmpty() } ?: action.hitTimes
+            chargeHitTime != null -> listOf(chargeHitTime)
+            else -> action.hitTimes
+        }
+
+        return MeleeSwingTiming(duration, hitTimes.map { scaledTicks(it).coerceIn(0, duration - 1) }.sorted().toIntArray())
+    }
 
     /** Checks if weapon is a shotgun (projectile count > 1). */
     val isShotgun: Boolean

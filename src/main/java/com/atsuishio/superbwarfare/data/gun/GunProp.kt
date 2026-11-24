@@ -8,6 +8,9 @@ import com.atsuishio.superbwarfare.data.gun.GunData.Companion.getPerkPriority
 import com.atsuishio.superbwarfare.data.gun.melee.isMeleeProjectileMarker
 import com.atsuishio.superbwarfare.init.ModPerks
 import com.atsuishio.superbwarfare.perk.Perk
+import net.minecraft.core.registries.Registries
+import net.minecraft.resources.ResourceLocation
+import net.minecraft.tags.TagKey
 import net.minecraftforge.registries.RegistryManager
 import kotlin.math.min
 import kotlin.reflect.KProperty1
@@ -109,6 +112,21 @@ class GunProp<T, R>(
 
         @JvmField
         val MELEE_DAMAGE = plainProp(DefaultGunData::meleeDamage)
+
+        @JvmField
+        val CAN_HARVEST = plainProp(DefaultGunData::canHarvest)
+
+        @JvmField
+        val MINE_SPEED = plainProp(DefaultGunData::mineSpeed)
+
+        @JvmField
+        val MINEABLE_BLOCK_TAGS = complexProp(DefaultGunData::mineableBlockTags) { tags ->
+            tags.mapNotNull { ResourceLocation.tryParse(it.removePrefix("#")) }
+                .map { TagKey.create(Registries.BLOCK, it) }
+        }
+
+        @JvmField
+        val HARVEST_TIER = complexProp(DefaultGunData::harvestTier, ResourceLocation::tryParse)
 
         @JvmField
         val MELEE_DURATION = plainProp(DefaultGunData::meleeDuration)
@@ -349,6 +367,9 @@ class GunProp<T, R>(
         val EXPLOSION_RADIUS = plainProp(DefaultGunData::explosionRadius)
 
         @JvmField
+        val EXPLOSION_PENETRATION_RATIO = plainProp(DefaultGunData::explosionPenetrationRatio)
+
+        @JvmField
         val GRAVITY = plainProp(DefaultGunData::gravity)
 
         @JvmField
@@ -505,6 +526,21 @@ class GunProp<T, R>(
         val PROJECTILE_LIFE = plainProp(DefaultGunData::projectileLife)
 
         @JvmField
+        val PROJECTILE_PENETRATING = plainProp(DefaultGunData::projectilePenetrating)
+
+        @JvmField
+        val AIM_ASSIST = plainProp(DefaultGunData::aimAssist)
+
+        @JvmField
+        val AUTO_AIM = plainProp(DefaultGunData::autoAim)
+
+        @JvmField
+        val AUTO_AIM_RANGE = plainProp(DefaultGunData::autoAimRange)
+
+        @JvmField
+        val ALLY_HEAL_RATIO = plainProp(DefaultGunData::allyHealRatio)
+
+        @JvmField
         val PROJECTILE_SPLIT_COUNT = plainProp(DefaultGunData::projectileSplitCount)
 
         @JvmField
@@ -515,6 +551,9 @@ class GunProp<T, R>(
 
         @JvmField
         val UNDERWATER_MOTION_SCALE = plainProp(DefaultGunData::underwaterMotionScale)
+
+        @JvmField
+        val UNDERWATER_LAUNCH_SPEED_MULTIPLIER = plainProp(DefaultGunData::underwaterLaunchSpeedMultiplier)
 
         @JvmField
         val EXPLOSION_DESTROY = plainProp(DefaultGunData::explosionDestroy)
@@ -577,6 +616,9 @@ class GunProp<T, R>(
             modify(AMMO_COST_PER_SHOOT) { it.coerceAtLeast(0) }
             modify(FUEL_PER_AMMO) { it.coerceAtLeast(0) }
             modify(PROJECTILE_AMOUNT) { it.coerceAtLeast(0) }
+            modify(AIM_ASSIST) { it.coerceIn(-100, 100) }
+            modify(AUTO_AIM_RANGE) { if (it.isFinite()) it.coerceAtLeast(0.0) else 0.0 }
+            modify(ALLY_HEAL_RATIO) { if (it.isFinite()) it.coerceAtLeast(0.0) else 0.0 }
             modify(PROJECTILE_SPLIT_COUNT) { it.coerceAtLeast(0) }
             modify(PROJECTILE_SPLIT_AMOUNT) { it.coerceAtLeast(0) }
             modify(WEIGHT) { it.coerceAtLeast(1.0) }
@@ -599,6 +641,7 @@ class GunProp<T, R>(
             modify(BURST_AMOUNT) { it.coerceAtLeast(0) }
             modify(RPM) { it.coerceIn(1, 114514) }
             modify(RPM_MULTIPLIER) { it.coerceAtLeast(0.0) }
+            modify(EXPLOSION_PENETRATION_RATIO) { it.coerceIn(0.0, 100.0) }
             modify(UNDERWATER_MOTION_SCALE) { it.coerceIn(0.0f, 1.0f) }
             modify(KNOCKBACK) { it.coerceIn(-10.0f, 10.0f) }
 

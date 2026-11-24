@@ -71,9 +71,6 @@
   "AvailableAttachments": {
     "Charm": [
       "#superbwarfare:attachment/charm"
-    ],
-    "LowerRail": [
-      "#superbwarfare:attachment/lower_rail/standard"
     ]
   },
   "AvailablePerks": [
@@ -86,6 +83,7 @@
     "superbwarfare:silver_blade",
     "superbwarfare:flame_blade",
     "superbwarfare:frostmourne",
+    "superbwarfare:rusted_blade",
     "superbwarfare:cast_no_shadows",
     "superbwarfare:eager_edge",
     "superbwarfare:powerful_attraction",

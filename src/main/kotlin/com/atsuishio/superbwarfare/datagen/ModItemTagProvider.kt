@@ -456,7 +456,8 @@ class ModItemTagProvider(
             perkItem(ModPerks.AP_BULLET),
             perkItem(ModPerks.SUPER_HEAVY_BULLET),
             perkItem(ModPerks.SHATTER_CAPS),
-            perkItem(ModPerks.ACID_BULLET)
+            perkItem(ModPerks.ACID_BULLET),
+            perkItem(ModPerks.RUSTED_BLADE)
         )
         this.tag(ModTags.Items.RESEARCHABLE_AMMO_PERK_EPIC).add(
             perkItem(ModPerks.HOMING_BULLET),
@@ -690,22 +691,26 @@ class ModItemTagProvider(
             ModItems.LOWER_RAIL_BIPOD,
             ModItems.PEQ_15,
             ModItems.PISTOL_LASER,
-            ModItems.HANDGUN_SHIELD
+            ModItems.HANDGUN_SHIELD,
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT
         ),
         AttachmentType.UPPER_RAIL to listOf(
             ModItems.PEQ_15,
             ModItems.PISTOL_LASER,
             ModItems.STANDARD_GUN_SHIELD,
-            ModItems.HYPERION_SHIELD_MODULE
+            ModItems.HYPERION_SHIELD_MODULE,
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT
         ),
         AttachmentType.LEFT_RAIL to listOf(
             ModItems.PEQ_15,
             ModItems.PISTOL_LASER,
-            ModItems.RANGE_FINDER
+            ModItems.RANGE_FINDER,
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT
         ),
         AttachmentType.RIGHT_RAIL to listOf(
             ModItems.PEQ_15,
-            ModItems.PISTOL_LASER
+            ModItems.PISTOL_LASER,
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT
         ),
     )
 
@@ -782,6 +787,7 @@ class ModItemTagProvider(
             ModItems.LOWER_RAIL_BIPOD.get(),
             ModItems.PEQ_15.get(),
             ModItems.PISTOL_LASER.get(),
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT.get(),
         )
 
         this.tag(ModTags.Items.ATTACHMENT_UPPER_RAIL_STANDARD).add(
@@ -789,17 +795,20 @@ class ModItemTagProvider(
             ModItems.STANDARD_GUN_SHIELD.get(),
             ModItems.PISTOL_LASER.get(),
             ModItems.HYPERION_SHIELD_MODULE.get(),
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT.get(),
         )
 
         this.tag(ModTags.Items.ATTACHMENT_LEFT_RAIL_STANDARD).add(
             ModItems.PEQ_15.get(),
             ModItems.RANGE_FINDER.get(),
             ModItems.PISTOL_LASER.get(),
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT.get(),
         )
 
         this.tag(ModTags.Items.ATTACHMENT_RIGHT_RAIL_STANDARD).add(
             ModItems.PEQ_15.get(),
             ModItems.PISTOL_LASER.get(),
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT.get(),
         )
 
         // stock_zenit_pt_1 是 AK 系专属，不进通用 tag
@@ -833,6 +842,14 @@ class ModItemTagProvider(
             ModItems.MUZZLE_ZENIT_DTK_1.get(),
             ModItems.MUZZLE_COMPENSATOR_R_17.get(),
             ModItems.AR_SILENCER.get(),
+        )
+
+        this.tag(ModTags.Items.FOOD_RAIN_FOODS).add(
+            Items.BREAD, Items.COOKED_BEEF, Items.COOKED_CHICKEN, Items.BAKED_POTATO,
+            Items.APPLE, Items.CARROT, Items.COOKIE, Items.PUMPKIN_PIE, Items.MELON_SLICE,
+            Items.CAKE, Items.MUSHROOM_STEW, Items.GOLDEN_CARROT, Items.GOLDEN_APPLE,
+            Items.COOKED_PORKCHOP, Items.COOKED_MUTTON, Items.COOKED_RABBIT,
+            Items.COOKED_COD, Items.COOKED_SALMON
         )
     }
 

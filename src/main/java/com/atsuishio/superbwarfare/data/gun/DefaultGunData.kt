@@ -85,6 +85,15 @@ data class DefaultGunData(
     val range: Int = 128,
     @SerialName("MeleeDamage")
     val meleeDamage: Double = 0.0,
+    // 是否允许近战挖掘方块
+    @SerialName("CanHarvest")
+    val canHarvest: Boolean = false,
+    @SerialName("MineSpeed")
+    val mineSpeed: Float = 1f,
+    @SerialName("MineableBlockTags")
+    val mineableBlockTags: List<String> = emptyList(),
+    @SerialName("HarvestTier")
+    val harvestTier: String = "minecraft:wood",
     @SerialName("MeleeDuration")
     val meleeDuration: Int = 16,
     @SerialName("MeleeDamageTime")
@@ -113,7 +122,7 @@ data class DefaultGunData(
     @SerialName("Projectile")
     val projectile: StringOrObject<ProjectileInfo> = StringOrObject(ProjectileInfo()),
     @SerialName("ProjectileBone")
-    val projectileBone: SingleOrList<String> = SingleOrList<String>(),
+    val projectileBone: SingleOrList<String> = SingleOrList(),
     @SerialName("ShootPos")
     val shootPos: ShootPos = ShootPos(),
     @SerialName("SeekWeaponInfo")
@@ -231,6 +240,9 @@ data class DefaultGunData(
     val explosionDamage: Double = 0.0,
     @SerialName("ExplosionRadius")
     val explosionRadius: Double = 0.0,
+    // 爆炸的掩体穿透比例（百分比）：躲在掩体后仍会受到的爆炸伤害比例
+    @SerialName("ExplosionPenetrationRatio")
+    val explosionPenetrationRatio: Double = 15.0,
     @SerialName("Gravity")
     val gravity: Double = 0.03,
     @SerialName("ShootDelay")
@@ -315,6 +327,16 @@ data class DefaultGunData(
     val shellType: String = "Default",
     @SerialName("ProjectileLife")
     val projectileLife: Int = 400,
+    @SerialName("ProjectilePenetrating")
+    val projectilePenetrating: Boolean = false,
+    @SerialName("AimAssist")
+    val aimAssist: Int = 0,
+    @SerialName("AutoAim")
+    val autoAim: Boolean = false,
+    @SerialName("AutoAimRange")
+    val autoAimRange: Double = 0.0,
+    @SerialName("AllyHealRatio")
+    val allyHealRatio: Double = 0.0,
     // 投射物分裂次数：爆炸消失后分裂出的产物再减一，0 表示不分裂
     @SerialName("ProjectileSplitCount")
     val projectileSplitCount: Int = 0,
@@ -344,6 +366,9 @@ data class DefaultGunData(
     val name: String? = null,
     @SerialName("UnderwaterMotionScale")
     val underwaterMotionScale: Float = 0.75f,
+    // 水下发射初速度倍率，设置成null就是旧版的写法
+    @SerialName("UnderwaterLaunchSpeedMultiplier")
+    val underwaterLaunchSpeedMultiplier: Float? = null,
     @SerialName("ExplosionDestroy")
     val explosionDestroy: Boolean = true,
     @SerialName("Knockback")

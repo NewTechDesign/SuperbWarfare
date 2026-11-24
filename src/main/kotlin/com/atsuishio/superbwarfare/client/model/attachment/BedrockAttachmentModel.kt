@@ -2,6 +2,7 @@ package com.atsuishio.superbwarfare.client.model.attachment
 
 import com.atsuishio.superbwarfare.Mod
 import com.atsuishio.superbwarfare.client.charm.CharmRig
+import com.atsuishio.superbwarfare.client.lighting.GunMuzzleLightHandler
 import com.atsuishio.superbwarfare.client.renderer.ModRenderTypes
 import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoDisplayRenderer
 import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoDisplayRenderer.AmmoBarState
@@ -65,6 +66,7 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
     private val modeScopeBodyGroups = mutableMapOf<Int, List<Int>>()
     private val divisionGroups = mutableMapOf<String, List<Int>>()
     private val bindGlobalTransformCache = mutableMapOf<String, Matrix4f?>()
+    private val bindInstance: TreeModelInstance by lazy { baseModel.createInstance() }
     private val illuminatedBoneIndices: IntArray = baseModel.bones()
         .asSequence()
         .filter { it.name().endsWith(ILLUMINATED_SUFFIX) }
@@ -187,14 +189,9 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
     }
 
     fun getBindGlobalTransform(boneName: String): Matrix4f? {
-        bindGlobalTransformCache[boneName]?.let { return it }
+        if (bindGlobalTransformCache.containsKey(boneName)) return bindGlobalTransformCache[boneName]
         val index = baseModel.getIndex(boneName)
-        if (index < 0) return null
-
-        val currentPose = instance.pose
-        instance.resetPose()
-        val transform = Matrix4f(instance.getGlobalTransform(index))
-        instance.applyPose(currentPose)
+        val transform = if (index >= 0) Matrix4f(bindInstance.getGlobalTransform(index)) else null
         bindGlobalTransformCache[boneName] = transform
         return transform
     }
@@ -260,20 +257,10 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
         val ammoBarState = ammo.applyBars(readout.bars, readout.progress)
         val quadType = RenderType.entityTranslucent(texture)
         val triangleType = BedrockModelRenderTypes.polyMeshCutout(texture)
-        baseModel.renderToBuffer(
-            instance,
-            poseStack,
-            bufferSource,
-            quadType,
-            triangleType,
-            packedLight,
-            packedOverlay,
-            1f,
-            1f,
-            1f,
-            1f,
-            true
-        )
+        GunMuzzleLightHandler.renderLitModel(bufferSource, instance, poseStack.last().pose(), texture, quadType, triangleType) { source ->
+            baseModel.renderToBuffer(instance, poseStack, source, quadType, triangleType,
+                packedLight, packedOverlay, 1f, 1f, 1f, 1f, true)
+        }
         ammo.renderBars(ammoBarState, poseStack, bufferSource, quadType, triangleType, packedLight, true)
         ammo.restoreBars(ammoBarState)
 
@@ -365,6 +352,7 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
         renderRemaining(
             poseStack,
             bufferSource,
+            texture,
             quadType,
             triangleType,
             packedLight,
@@ -392,23 +380,75 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
         RenderSystem.clear(GL11.GL_STENCIL_BUFFER_BIT, Minecraft.ON_OSX)
 
         renderOcularStencil(poseStack, bufferSource, quadType, triangleType, light, false, info)
-        renderDivisionOnly(
-            poseStack,
-            bufferSource,
-            texture,
-            quadType,
-            triangleType,
-            light,
-            info,
-            divisionIndices(info),
-            texts
-        )
+        // Ordinary sight reticles are drawn once, after the gun and other attachments.
+        // Thermal sights retain their existing deferred lens/reticle composition.
+        if (info.thermal) {
+            renderDivisionOnly(
+                poseStack, bufferSource, texture, quadType, triangleType, light,
+                info, divisionIndices(info), texts
+            )
+        }
 
         RenderSystem.stencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
         ScopeStencilRenderHelper.disableItemEntityStencilTest()
 
         for (bodyIndex in scopeBodyIndices(info)) {
-            renderBoneImmediate(bodyIndex, poseStack, bufferSource, quadType, triangleType, light)
+            renderBoneImmediate(bodyIndex, poseStack, bufferSource, quadType, triangleType, light, texture)
+        }
+    }
+
+    /** Draw ordinary SIGHT divisions over model depth, still clipped by the original lens stencil. */
+    fun renderSightReticleOverlay(
+        poseStack: PoseStack,
+        bufferSource: MultiBufferSource.BufferSource,
+        texture: ResourceLocation,
+        light: Int,
+        info: ScopeMode,
+        readout: AmmoReadout
+    ) {
+        if (!info.isSight() || info.thermal || ClientEventHandler.zoomTime < DIVISION_MIN_ZOOM) return
+        val divisions = divisionIndices(info)
+        if (divisions.isEmpty()) return
+        // Both Oculus batching and AR must finish model draws before the foreground pass starts.
+        if (!ShaderCompat.endBatch(bufferSource)) bufferSource.endBatch()
+        val quadType = RenderType.entityTranslucent(texture)
+        val triangleType = BedrockModelRenderTypes.polyMeshCutout(texture)
+        val foreground = MultiBufferSource { type ->
+            val illuminated = type == ModRenderTypes.scopeReticle(texture) ||
+                    type == ModRenderTypes.scopeReticleMesh(texture)
+            bufferSource.getBuffer(ModRenderTypes.sightReticle(
+                texture, type.mode() == VertexFormat.Mode.TRIANGLES, illuminated
+            ))
+        }
+        val texts = ammo.buildTexts(
+            readout.texts, readout.count, readout.progress, readout.range, readout.heat, readout.zoom,
+            readout.heatShots, readout.heatShotsMax
+        )
+        ScopeStencilRenderHelper.enableItemEntityStencilTest()
+        RenderSystem.stencilMask(0)
+        RenderSystem.stencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
+        RenderSystem.disableDepthTest()
+        RenderSystem.depthMask(false)
+        try {
+            withShaderBonesHidden {
+                for ((i, division) in divisions.withIndex()) {
+                    RenderSystem.stencilFunc(GL11.GL_EQUAL, i + 1, 0xFF)
+                    renderDivisionVertices(division, poseStack, foreground, texture, quadType, triangleType, light)
+                    if (!ShaderCompat.endBatch(bufferSource)) bufferSource.endBatch()
+                    for (text in texts) {
+                        if (text.divisionIndex == division) {
+                            ammo.renderText(text, poseStack, bufferSource, foreground = true)
+                        }
+                    }
+                    if (!ShaderCompat.endBatch(bufferSource)) bufferSource.endBatch()
+                }
+            }
+        } finally {
+            RenderSystem.depthMask(true)
+            RenderSystem.enableDepthTest()
+            RenderSystem.stencilMask(0xFF)
+            RenderSystem.stencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
+            ScopeStencilRenderHelper.disableItemEntityStencilTest()
         }
     }
 
@@ -431,7 +471,7 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
         if (ringIndex >= 0) {
             RenderSystem.stencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
             RenderSystem.stencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
-            renderBoneImmediate(ringIndex, poseStack, bufferSource, quadType, triangleType, light)
+            renderBoneImmediate(ringIndex, poseStack, bufferSource, quadType, triangleType, light, texture)
         }
 
         renderOcularStencil(poseStack, bufferSource, quadType, triangleType, light, false, info)
@@ -440,7 +480,7 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
         if (bodyIndices.isNotEmpty()) {
             RenderSystem.stencilFunc(GL11.GL_EQUAL, 0, 0xFF)
             for (bodyIndex in bodyIndices) {
-                renderBoneImmediate(bodyIndex, poseStack, bufferSource, quadType, triangleType, light)
+                renderBoneImmediate(bodyIndex, poseStack, bufferSource, quadType, triangleType, light, texture)
             }
         }
 
@@ -783,6 +823,7 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
     private fun renderRemaining(
         poseStack: PoseStack,
         bufferSource: MultiBufferSource.BufferSource,
+        texture: ResourceLocation,
         quadType: RenderType,
         triangleType: RenderType,
         light: Int,
@@ -815,15 +856,10 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
             }
         }
 
-        baseModel.renderToBuffer(
-            instance,
-            poseStack,
-            bufferSource,
-            quadType,
-            triangleType,
-            light,
-            OverlayTexture.NO_OVERLAY
-        )
+        GunMuzzleLightHandler.renderLitModel(bufferSource, instance, poseStack.last().pose(), texture, quadType, triangleType,
+            immediate = true) { source ->
+            baseModel.renderToBuffer(instance, poseStack, source, quadType, triangleType, light, OverlayTexture.NO_OVERLAY)
+        }
 
         for (i in hidden.indices) {
             instance.getBone(hidden[i])?.visible = originalVisible[i]
@@ -1078,9 +1114,14 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
         bufferSource: MultiBufferSource.BufferSource,
         quadType: RenderType,
         triangleType: RenderType,
-        light: Int
+        light: Int,
+        muzzleTexture: ResourceLocation? = null,
     ) {
-        renderBoneVertices(boneIndex, poseStack, bufferSource, quadType, triangleType, light)
+        if (muzzleTexture == null) renderBoneVertices(boneIndex, poseStack, bufferSource, quadType, triangleType, light)
+        else GunMuzzleLightHandler.renderLitModel(bufferSource, instance, poseStack.last().pose(), muzzleTexture, quadType, triangleType,
+            immediate = true) { source ->
+            renderBoneVertices(boneIndex, poseStack, source, quadType, triangleType, light)
+        }
         flush(bufferSource, quadType, triangleType)
     }
 

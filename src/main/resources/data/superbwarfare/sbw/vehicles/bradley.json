@@ -53,6 +53,11 @@
         "ZoomPosition": [-0.025, 0.645, 1.204],
         "Direction": "Barrel"
       },
+      "CameraBone": {
+        "Bone": "driver_camera",
+        "Direction": "barrel",
+        "ZoomBone": "driver_zoom_camera"
+      },
       "Weapons": ["Cannon", "MachineGun", "Missile"],
       "Sensitivity": [0.53, 0.71, 0.9],
       "DismountInfo": {
@@ -274,7 +279,7 @@
       "ShootPos": {
         "Transform": "Turret",
         "Positions": [[1.795, 1.122, 0.218], [1.451, 0.465, 0.218]],
-        "Directions": ["Turret"],
+        "Directions": ["Barrel"],
         "ViewDirection": "Barrel"
       },
       "Crosshair": "@VehicleCommonMissile",

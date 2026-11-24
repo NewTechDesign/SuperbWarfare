@@ -1,5 +1,6 @@
 package com.atsuishio.superbwarfare.client.model.gun
 
+import com.atsuishio.superbwarfare.client.lighting.GunMuzzleLightHandler
 import com.atsuishio.superbwarfare.client.renderer.ModRenderTypes
 import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoDisplayRenderer
 import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoReadout
@@ -101,6 +102,7 @@ open class GeoGunModel @JvmOverloads constructor(
     protected val rightHandBoneIndex: Int = baseModel.getIndex(RIGHT_HAND_BONE)
 
     protected val bindGlobalTransformCache = hashMapOf<String, Matrix4f?>()
+    private val bindInstance: TreeModelInstance by lazy { baseModel.createInstance() }
     protected var modelCenterCache: Vector3f? = null
 
     init {
@@ -210,11 +212,7 @@ open class GeoGunModel @JvmOverloads constructor(
         val index = baseModel.getIndex(boneName)
         if (index < 0) return null
 
-        val currentPose = instance.pose
-        instance.resetPose()
-        val transform = Matrix4f(instance.getGlobalTransform(index))
-        instance.applyPose(currentPose)
-        return transform
+        return Matrix4f(bindInstance.getGlobalTransform(index))
     }
 
     open fun getConstraintPath(boneIndex: Int): IntArray {
@@ -242,9 +240,6 @@ open class GeoGunModel @JvmOverloads constructor(
             return modelCenterCache!!
         }
 
-        val currentPose = instance.pose
-        instance.resetPose()
-
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE
         var minZ = Float.MAX_VALUE
@@ -257,7 +252,7 @@ open class GeoGunModel @JvmOverloads constructor(
             val name = bone.name().lowercase(Locale.ENGLISH)
             if (name.contains("view") || name.contains("camera") || name.contains("hand")) continue
 
-            val position = instance.getGlobalTransform(bone.index()).getTranslation(Vector3f())
+            val position = bindInstance.getGlobalTransform(bone.index()).getTranslation(Vector3f())
             minX = minOf(minX, position.x)
             minY = minOf(minY, position.y)
             minZ = minOf(minZ, position.z)
@@ -266,8 +261,6 @@ open class GeoGunModel @JvmOverloads constructor(
             maxZ = maxOf(maxZ, position.z)
             any = true
         }
-
-        instance.applyPose(currentPose)
 
         modelCenterCache = if (any) {
             Vector3f((minX + maxX) / 2f, (minY + maxY) / 2f, (minZ + maxZ) / 2f)
@@ -288,7 +281,7 @@ open class GeoGunModel @JvmOverloads constructor(
         emissiveTexture: ResourceLocation? = null
     ) {
         StaticGunRenderer.registerMaterials(bufferSource, texture, readout, emissiveTexture)
-        renderToBuffer(
+        renderModel(
             poseStack,
             bufferSource,
             RenderType.entityTranslucent(texture),
@@ -297,7 +290,8 @@ open class GeoGunModel @JvmOverloads constructor(
             packedOverlay,
             readout,
             handAnchors,
-            emissiveTexture
+            emissiveTexture,
+            texture
         )
     }
 
@@ -334,6 +328,20 @@ open class GeoGunModel @JvmOverloads constructor(
         readout: AmmoReadout = AmmoReadout(),
         handAnchors: Map<HumanoidArm, Matrix4f> = emptyMap(),
         emissiveTexture: ResourceLocation? = null
+    ) = renderModel(poseStack, bufferSource, quadRenderType, triangleRenderType, packedLight, packedOverlay,
+        readout, handAnchors, emissiveTexture, null)
+
+    open fun renderModel(
+        poseStack: PoseStack,
+        bufferSource: MultiBufferSource,
+        quadRenderType: RenderType,
+        triangleRenderType: RenderType,
+        packedLight: Int,
+        packedOverlay: Int,
+        readout: AmmoReadout,
+        handAnchors: Map<HumanoidArm, Matrix4f>,
+        emissiveTexture: ResourceLocation?,
+        muzzleTexture: ResourceLocation?,
     ) {
         hideBone(leftHandBoneIndex)
         hideBone(rightHandBoneIndex)
@@ -344,20 +352,13 @@ open class GeoGunModel @JvmOverloads constructor(
         // tint; those are drawn separately by renderBars so they can take a color.
         val ammoBarState = ammo.applyBars(readout.bars, readout.progress)
 
-        baseModel.renderToBuffer(
-            instance,
-            poseStack,
-            bufferSource,
-            quadRenderType,
-            triangleRenderType,
-            packedLight,
-            packedOverlay,
-            1f,
-            1f,
-            1f,
-            1f,
-            true
-        )
+        val drawModel = { source: MultiBufferSource ->
+            baseModel.renderToBuffer(instance, poseStack, source, quadRenderType, triangleRenderType,
+                packedLight, packedOverlay, 1f, 1f, 1f, 1f, true)
+        }
+        if (muzzleTexture == null) drawModel(bufferSource)
+        else GunMuzzleLightHandler.renderLitModel(bufferSource, instance, poseStack.last().pose(), muzzleTexture,
+            quadRenderType, triangleRenderType, draw = drawModel)
 
         // 自发光层：同一份几何、同一份骨骼姿态，只是换一套 RenderType 再画一遍，所以手臂遮蔽、弹链、
         // 弹匣之类的可见性判断不必重做——上面那几处 `visible` 还留在骨骼上，`renderBone` 会照样跳过。
@@ -540,10 +541,11 @@ open class GeoGunModel @JvmOverloads constructor(
             val renderManager: EntityRenderDispatcher = mc.entityRenderDispatcher
             val renderer = renderManager.getRenderer(player) as PlayerRenderer
 
-            if (hand == HumanoidArm.RIGHT) {
-                renderer.renderRightHand(poseStack, bufferSource, packedLight, player)
-            } else {
-                renderer.renderLeftHand(poseStack, bufferSource, packedLight, player)
+            val skin = player.skinTextureLocation
+            GunMuzzleLightHandler.renderLitModel(bufferSource, null, poseStack.last().pose(), skin,
+                RenderType.entitySolid(skin), RenderType.entityTranslucent(skin)) { source ->
+                if (hand == HumanoidArm.RIGHT) renderer.renderRightHand(poseStack, source, packedLight, player)
+                else renderer.renderLeftHand(poseStack, source, packedLight, player)
             }
         }
     }

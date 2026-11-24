@@ -1,5 +1,6 @@
 package com.atsuishio.superbwarfare.entity.projectile
 
+import com.atsuishio.superbwarfare.tools.CustomExplosion
 import net.minecraft.world.effect.MobEffectInstance
 
 /**
@@ -12,6 +13,10 @@ interface IBulletProperties {
     fun getDamage(): Float
     fun setDamage(value: Float)
 
+    // 命中队友时将伤害转为治疗的倍率，0 表示关闭
+    fun getAllyHealRatio(): Float = 0f
+    fun setAllyHealRatio(value: Float) {}
+
     // 爆炸伤害
     fun getExplosionDamage(): Float = 0f
     fun setExplosionDamage(value: Float) {}
@@ -19,6 +24,10 @@ interface IBulletProperties {
     // 爆炸半径
     fun getExplosionRadius(): Float = 0f
     fun setExplosionRadius(value: Float) {}
+
+    // 爆炸的掩体穿透比例（百分比）：躲在掩体后仍会受到的爆炸伤害比例
+    fun getExplosionPenetrationRatio(): Float = CustomExplosion.DEFAULT_PENETRATION_RATIO
+    fun setExplosionPenetrationRatio(value: Float) {}
 
     // 弹射物存活时间
     fun getLife(): Int = 40

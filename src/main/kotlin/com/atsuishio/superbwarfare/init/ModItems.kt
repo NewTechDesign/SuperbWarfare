@@ -19,7 +19,10 @@ import com.atsuishio.superbwarfare.item.container.SmallContainerBlockItem
 import com.atsuishio.superbwarfare.item.curio.*
 import com.atsuishio.superbwarfare.item.food.CrustItem
 import com.atsuishio.superbwarfare.item.food.SuspiciousYellowCakeItem
-import com.atsuishio.superbwarfare.item.gun.*
+import com.atsuishio.superbwarfare.item.gun.EmptyGunItem
+import com.atsuishio.superbwarfare.item.gun.GeoGunItem
+import com.atsuishio.superbwarfare.item.gun.GunItem
+import com.atsuishio.superbwarfare.item.gun.MeleeGunItem
 import com.atsuishio.superbwarfare.item.gun.launcher.IglaItem
 import com.atsuishio.superbwarfare.item.gun.launcher.JavelinItem
 import com.atsuishio.superbwarfare.item.gun.launcher.SuperStarShooterItem
@@ -153,7 +156,7 @@ object ModItems {
     @JvmField val IGLA_9K38 = registerGun<IglaItem>()
     @JvmField val BOCEK = registerGun("bocek") { GeoGunItem(Properties().rarity(Rarity.EPIC)) }
     @JvmField val SUPER_STAR_SHOOTER = registerGun<SuperStarShooterItem>()
-    @JvmField val REFORGING = registerGun("reforging") { LaserGunItem(Properties().rarity(SUPERB)) }
+    @JvmField val REFORGING = registerGun("reforging") { GeoGunItem(Properties().rarity(SUPERB)) }
     @JvmField val RAUBTIER = registerGun("raubtier") { GeoGunItem(Properties().rarity(SUPERB)) }
 
     @JvmField val VEHICLE_GUN = registerGun<VehicleGunItem>()
@@ -275,6 +278,8 @@ object ModItems {
     @JvmField val SMALL_AERIAL_BOMB = registerAmmo("small_aerial_bomb") { Item(Properties().stacksTo(4)) }
     @JvmField val MEDIUM_AERIAL_BOMB = registerAmmo("medium_aerial_bomb") { Item(Properties().stacksTo(2)) }
     @JvmField val LARGE_AERIAL_BOMB = registerAmmo("large_aerial_bomb") { Item(Properties().stacksTo(1)) }
+    @JvmField val FOOD_RAIN_ATOM_BOMB = registerAmmo<FoodRainAtomBombItem>()
+    @JvmField val SMELLY_BOY = registerAmmo<SmellyBoyItem>()
     // @formatter:on
 
     /**
@@ -574,6 +579,7 @@ object ModItems {
     @JvmField val WEAPON_REPAIR_STATION = registerBlock(ModBlocks.WEAPON_REPAIR_STATION)
     @JvmField val TRIPOD = registerBlock<TripodBlockItem>()
     @JvmField val ITEM_DISPLAY_BOARD = registerBlock(ModBlocks.ITEM_DISPLAY_BOARD)
+    @JvmField val SHELF = registerBlock<ShelfBlockItem>()
     // @formatter:on
 
     /**
@@ -774,7 +780,9 @@ object ModItems {
     // LowerRail
     // @formatter:off
     @JvmField val PISTOL_LASER = registerAttachment("pistol_laser")
-    @JvmField val LOWER_RAIL_BIPOD = registerAttachment("lower_rail_bipod", Rarity.RARE)
+    @JvmField val SUREFIRE_X400_ULTRA_FLASHLIGHT =
+        registerAttachment("surefire_x400_ultra_flashlight", Rarity.RARE)
+    @JvmField val LOWER_RAIL_BIPOD = registerAttachment("lower_rail_bipod")
     // @formatter:on
 
     // LeftRail

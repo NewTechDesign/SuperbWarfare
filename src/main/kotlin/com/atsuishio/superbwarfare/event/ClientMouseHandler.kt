@@ -11,12 +11,14 @@ import com.atsuishio.superbwarfare.init.ModItems
 import com.atsuishio.superbwarfare.init.ModMobEffects
 import com.atsuishio.superbwarfare.item.gun.GunItem
 import com.atsuishio.superbwarfare.network.message.send.MouseMoveMessage
+import com.atsuishio.superbwarfare.network.message.send.TurretAngleMessage
 import com.atsuishio.superbwarfare.tools.localPlayer
 import com.atsuishio.superbwarfare.tools.mc
 import com.atsuishio.superbwarfare.tools.notInGame
 import com.atsuishio.superbwarfare.tools.sendPacketToServer
 import net.minecraft.client.CameraType
 import net.minecraft.util.Mth
+import net.minecraft.world.entity.player.Player
 import net.minecraft.world.phys.Vec2
 import net.minecraftforge.api.distmarker.Dist
 import net.minecraftforge.client.event.ViewportEvent
@@ -78,7 +80,10 @@ object ClientMouseHandler {
     @SubscribeEvent
     fun handleClientTick(event: TickEvent.ClientTickEvent) {
         val player = localPlayer ?: return
-        if (event.phase == TickEvent.Phase.START) return
+        if (event.phase == TickEvent.Phase.START) {
+            this.accumulateDirectTurretInput(player)
+            return
+        }
 
         posO = posN
         posN = MouseMovementHandler.getMousePos()
@@ -86,6 +91,18 @@ object ClientMouseHandler {
         val moveSpeedX = Mth.clamp(posN.x - posO.x, -speed, speed)
         val moveSpeedY = Mth.clamp(posN.y - posO.y, -speed, speed)
 
+        if (!notInGame) {
+            val directVehicle = player.vehicle as? VehicleEntity
+            if (directVehicle != null &&
+                directVehicle.hasTurret() &&
+                directVehicle.turretControllerIndex == directVehicle.getSeatIndex(player)
+            ) {
+                val directMode = mc.options.cameraType == CameraType.FIRST_PERSON || ClientEventHandler.zoomVehicle
+                sendPacketToServer(
+                    TurretAngleMessage(directMode, directVehicle.turretYRot, directVehicle.turretXRot)
+                )
+            }
+        }
 
         val vehicle = player.vehicle
         if (vehicle is VehicleEntity && (vehicle.vehicleType == VehicleType.AIRPLANE || vehicle.vehicleType == VehicleType.HELICOPTER)) {
@@ -134,7 +151,7 @@ object ClientMouseHandler {
                 i *= (1 - (Mth.abs(vehicle.roll) - 90) / 90)
             }
 
-            if (player != vehicle.firstPassenger) return
+            if (player != vehicle.firstPassenger || vehicle.getSeatIndex(player) != 0) return
 
             if (notInGame) {
                 sendPacketToServer(MouseMoveMessage(0.0, 0.0))
@@ -158,7 +175,71 @@ object ClientMouseHandler {
             }
 
         }
+
     }
+
+    private var directTurretLastPos: Vec2? = null
+    private fun accumulateDirectTurretInput(player: Player) {
+        val vehicle = player.vehicle as? VehicleEntity
+        // 第三人称非瞄准不累积：回归旧“炮塔追随视线”瞄准
+        val directMode = mc.options.cameraType == CameraType.FIRST_PERSON || ClientEventHandler.zoomVehicle
+        val active = vehicle != null &&
+                directMode &&
+                vehicle.hasTurret() &&
+                vehicle.turretControllerIndex == vehicle.getSeatIndex(player) &&
+                !vehicle.isWreck &&
+                !notInGame &&
+                !ClientEventHandler.isFreeCam(player) &&
+                !ClientEventHandler.isNacelleCam(player) &&
+                mc.mouseHandler.isMouseGrabbed &&
+                mc.isWindowActive
+
+        if (!active) {
+            directTurretLastPos = null
+            directTurretLastPitchDelta = 0.0
+            return
+        }
+
+        val current = MouseMovementHandler.getMousePos()
+        val last = directTurretLastPos
+        directTurretLastPos = current
+        if (last == null) return
+
+        val dx = Mth.clamp(current.x - last.x, -256.0f, 256.0f).toDouble()
+        val dy = Mth.clamp(current.y - last.y, -256.0f, 256.0f).toDouble()
+        if (dx == 0.0 && dy == 0.0) return
+
+        val baseSensitivity = mc.options.sensitivity().get() * 0.6 + 0.2
+        val sensitivity = changeSensitivity(baseSensitivity)
+        if (sensitivity <= 0.0) return
+
+        val h = sensitivity * sensitivity * sensitivity * 8.0 * 0.15
+        val invert = (if (mc.options.invertYMouse().get()) -1.0 else 1.0) * invertY()
+
+        var yawDeg = dx * h
+        var pitchDeg = dy * h * invert
+
+        if (mc.options.cameraType == CameraType.FIRST_PERSON) {
+            val roll = vehicle.roll
+            val absRoll = abs(roll)
+            if (absRoll > 1f) {
+                val a = (absRoll / 90f).coerceAtMost(1f)
+                var i = if (roll < 0f) 1.0 else -1.0
+                if (absRoll > 90f) {
+                    i *= 1 - (absRoll - 90f) / 90f
+                }
+                val newYawDeg = (1 - a) * yawDeg + a * directTurretLastPitchDelta * i
+                val newPitchDeg = (1 - a) * pitchDeg + a * yawDeg * (if (roll < 0f) -1.0 else 1.0)
+                yawDeg = newYawDeg
+                pitchDeg = newPitchDeg
+            }
+        }
+        directTurretLastPitchDelta = dy * h * invert
+
+        vehicle.addDirectTurretInput(yawDeg.toFloat(), pitchDeg.toFloat())
+    }
+
+    private var directTurretLastPitchDelta = 0.0
 
     @Suppress("unused")
     @SubscribeEvent

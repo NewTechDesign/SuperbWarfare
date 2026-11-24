@@ -1,6 +1,8 @@
 package com.atsuishio.superbwarfare.event
 
 import com.atsuishio.superbwarfare.api.event.PreKillEvent
+import com.atsuishio.superbwarfare.block.ItemDisplayBoardBlock
+import com.atsuishio.superbwarfare.block.entity.ItemDisplayBoardBlockEntity
 import com.atsuishio.superbwarfare.capability.player.PlayerVariable
 import com.atsuishio.superbwarfare.config.common.GameplayConfig
 import com.atsuishio.superbwarfare.config.server.MiscConfig
@@ -13,6 +15,7 @@ import com.atsuishio.superbwarfare.data.gun.value.ReloadState
 import com.atsuishio.superbwarfare.entity.living.TargetEntity
 import com.atsuishio.superbwarfare.entity.mixin.ExplosionAccess
 import com.atsuishio.superbwarfare.entity.mixin.ICustomKnockback
+import com.atsuishio.superbwarfare.entity.projectile.PerkAwareProjectile
 import com.atsuishio.superbwarfare.entity.vehicle.base.AutoAimableEntity
 import com.atsuishio.superbwarfare.entity.vehicle.base.VehicleEntity
 import com.atsuishio.superbwarfare.init.*
@@ -30,6 +33,7 @@ import net.minecraft.network.protocol.game.ClientboundStopSoundPacket
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.sounds.SoundSource
+import net.minecraft.world.InteractionResult
 import net.minecraft.world.damagesource.DamageSource
 import net.minecraft.world.damagesource.DamageTypes
 import net.minecraft.world.effect.MobEffectCategory
@@ -44,6 +48,7 @@ import net.minecraft.world.item.ItemStack
 import net.minecraft.world.level.Explosion
 import net.minecraftforge.event.entity.living.*
 import net.minecraftforge.event.entity.player.EntityItemPickupEvent
+import net.minecraftforge.event.entity.player.PlayerInteractEvent
 import net.minecraftforge.event.level.ExplosionEvent
 import net.minecraftforge.eventbus.api.Event
 import net.minecraftforge.eventbus.api.EventPriority
@@ -595,16 +600,17 @@ object LivingEventHandler {
 
         if (attacker == null) return
 
-        val stack = attacker.mainHandItem
-        if (stack.item !is GunItem) return
-
+        val shot = (directEntity as? PerkAwareProjectile)?.shotPerks
+        val data = shot?.data ?: run {
+            val stack = attacker.mainHandItem
+            if (stack.item !is GunItem) return
+            GunData.from(stack)
+        }
         var damage = event.amount
-
-        val data = GunData.from(stack)
         // 本段动作 + 来源：由 `MeleeAttackMessage` 在同 tick 写入（近战伤害的因果链就在一个 tick 内）
         val meleeContext = if (attacker is Player) MeleeAttackContext.get(attacker.uuid) else null
         for (type in Perk.Type.entries) {
-            val instance = data.perk.getInstances(type)
+            val instance = shot?.instances?.get(type) ?: data.perk.getInstances(type)
 
             instance.forEach {
                 if (DamageTypeTool.isGunDamage(source)) {
@@ -644,12 +650,14 @@ object LivingEventHandler {
 
         if (attacker == null) return
 
-        val stack = attacker.mainHandItem
-        if (stack.item !is GunItem) return
-
-        val data = GunData.from(stack)
+        val shot = (directEntity as? PerkAwareProjectile)?.shotPerks
+        val data = shot?.data ?: run {
+            val stack = attacker.mainHandItem
+            if (stack.item !is GunItem) return
+            GunData.from(stack)
+        }
         for (type in Perk.Type.entries) {
-            val instance = data.perk.getInstances(type)
+            val instance = shot?.instances?.get(type) ?: data.perk.getInstances(type)
             instance.forEach { it.perk.onKill(data, it, event.entity, source) }
         }
     }
@@ -824,10 +832,37 @@ object LivingEventHandler {
                             if (isCustom) (impactStrength * impactStrength + impactStrength) / 2.0 * explosion.damage
                             else (impactStrength * impactStrength + impactStrength) / 2.0 * 7.0 * explosionRadius + 1.0
 
-                        entity.hurt(explosion.damageSource, damage.toFloat())
+                        val amount = damage.toFloat()
+                        if (isCustom) {
+                            explosion.applyDamageWithPerks(entity, amount) { entity.hurt(explosion.damageSource, amount) }
+                        } else {
+                            entity.hurt(explosion.damageSource, amount)
+                        }
                     }
                 }
             }
         }
+    }
+
+    @SubscribeEvent
+    fun onRightClickBlock(event: PlayerInteractEvent.RightClickBlock) {
+        val level = event.level
+        val pos = event.pos
+        val state = level.getBlockState(pos)
+        if (state.block !is ItemDisplayBoardBlock) return
+
+        val player = event.entity
+        if (player.isSpectator) return
+        if (!player.isShiftKeyDown) return
+
+        val blockEntity = level.getBlockEntity(pos) as? ItemDisplayBoardBlockEntity ?: return
+        if (!blockEntity.hasItem) return
+
+        event.isCanceled = true
+        event.cancellationResult = InteractionResult.SUCCESS
+
+        if (level.isClientSide) return
+
+        ItemDisplayBoardBlock.takeDisplayedItem(level, pos, state, player)
     }
 }

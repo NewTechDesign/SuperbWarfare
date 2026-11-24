@@ -12,6 +12,8 @@ import com.atsuishio.superbwarfare.entity.getValue
 import com.atsuishio.superbwarfare.entity.living.DPSGeneratorEntity
 import com.atsuishio.superbwarfare.entity.living.TargetEntity
 import com.atsuishio.superbwarfare.entity.mixin.OBBHitter
+import com.atsuishio.superbwarfare.entity.multipartRoot
+import com.atsuishio.superbwarfare.entity.projectile.IAdvancedHitDetection.Companion.rayTraceBlocks
 import com.atsuishio.superbwarfare.entity.projectile.IAdvancedHitDetection.Companion.rayTraceBlocksWithFluid
 import com.atsuishio.superbwarfare.entity.projectile.IBulletProperties.Companion.DEFAULT_B
 import com.atsuishio.superbwarfare.entity.projectile.IBulletProperties.Companion.DEFAULT_G
@@ -54,6 +56,7 @@ import net.minecraft.world.effect.MobEffects
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.EntityType
 import net.minecraft.world.entity.LivingEntity
+import net.minecraft.world.entity.OwnableEntity
 import net.minecraft.world.entity.player.Player
 import net.minecraft.world.entity.projectile.Projectile
 import net.minecraft.world.item.ItemStack
@@ -63,10 +66,7 @@ import net.minecraft.world.level.block.Blocks
 import net.minecraft.world.level.block.SoundType
 import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.level.gameevent.GameEvent
-import net.minecraft.world.phys.BlockHitResult
-import net.minecraft.world.phys.EntityHitResult
-import net.minecraft.world.phys.HitResult
-import net.minecraft.world.phys.Vec3
+import net.minecraft.world.phys.*
 import net.minecraftforge.entity.PartEntity
 import java.util.function.Predicate
 import kotlin.math.*
@@ -78,12 +78,14 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
 
     // ===== IBulletProperties 属性（使用 getter/setter 方法） =====
     protected var damageValue = 1f
+    protected var allyHealRatioValue = 0f
     protected var headShotValue = 1f
     protected var legShotValue = 0.5f
     protected var beastValue = false
     protected var isZoomValue: Boolean = false
     protected var explosionDamageValue = 0.0f
     protected var explosionRadiusValue by EXPLOSION_RADIUS
+    protected var explosionPenetrationRatioValue: Float = CustomExplosion.DEFAULT_PENETRATION_RATIO
     protected var fireLevelValue = 0
     protected var dragonBreathValue = false
     protected var knockbackValue = 0.05f
@@ -97,6 +99,14 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
     // 是否能穿墙
     protected var penetratingValue: Boolean = false
 
+    internal var aimAssist: Int = 0
+
+    private val entityHitMargin: Double
+        get() {
+            val divisor = if (aimAssist > 0) 100.0 else 200.0
+            return bbWidth.toDouble() * aimAssist / divisor
+        }
+
     // 水下的动量系数
     protected var underwaterMotionScaleValue = 0.75f
 
@@ -106,6 +116,11 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
     override fun getDamage(): Float = damageValue
     override fun setDamage(value: Float) {
         damageValue = value
+    }
+
+    override fun getAllyHealRatio(): Float = allyHealRatioValue
+    override fun setAllyHealRatio(value: Float) {
+        allyHealRatioValue = if (value.isFinite()) value.coerceAtLeast(0f) else 0f
     }
 
     override fun getHeadShot(): Float = headShotValue
@@ -136,6 +151,11 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
     override fun getExplosionRadius(): Float = explosionRadiusValue
     override fun setExplosionRadius(value: Float) {
         explosionRadiusValue = value
+    }
+
+    override fun getExplosionPenetrationRatio(): Float = explosionPenetrationRatioValue
+    override fun setExplosionPenetrationRatio(value: Float) {
+        explosionPenetrationRatioValue = value.coerceIn(0f, CustomExplosion.MAX_PENETRATION_RATIO)
     }
 
     override fun getFireLevel(): Int = fireLevelValue
@@ -285,55 +305,39 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
      * From TaC-Z
      */
     override fun getHitResult(entity: Entity, startVec: Vec3, endVec: Vec3): EntityResult? {
+        val margin = entityHitMargin
         var hitPos: Vec3? = null
         if (entity is OBBEntity && !entity.enableAABB()) {
-            for (obb in entity.getOBBs()) {
+            val boxes = entity.getOBBs()
+            val start = startVec.toVector3d()
+            val end = endVec.toVector3d()
+            for (obb in boxes) {
                 if (obb.part == OBB.Part.COLLISION) continue
-                val obbVec = obb.clip(startVec.toVector3d(), endVec.toVector3d()).orElse(null) ?: continue
-
-                val pos = obbVec.toVec3()
-                hitPos = pos
-
-                val level = this.level()
-                if (level is ServerLevel) {
-                    level.playSound(
-                        null,
-                        BlockPos.containing(pos),
-                        ModSounds.HIT.get(),
-                        SoundSource.PLAYERS,
-                        1f,
-                        1f
-                    )
-                    ParticleTool.sendParticle(
-                        level,
-                        ModParticleTypes.FIRE_STAR.get(),
-                        pos.x,
-                        pos.y,
-                        pos.z,
-                        2,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.2,
-                        false
-                    )
-                    ParticleTool.sendParticle(
-                        level,
-                        ParticleTypes.SMOKE,
-                        pos.x,
-                        pos.y,
-                        pos.z,
-                        2,
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.01,
-                        false
-                    )
+                val bounds = if (margin < 0.0) {
+                    val extents = obb.extents
+                    if (minOf(extents.x, extents.y, extents.z) <= -margin) continue
+                    obb.inflate(margin)
+                } else obb
+                val hit = bounds.clip(start, end).orElse(null)?.toVec3() ?: continue
+                hitPos = hit
+                reportPartHit(obb.part, hit)
+            }
+            if (hitPos == null && margin > 0.0) {
+                var closestDistance = Double.POSITIVE_INFINITY
+                var closestPart: OBB.Part? = null
+                for (obb in boxes) {
+                    if (obb.part == OBB.Part.COLLISION || obb.inflate(margin).clip(start, end).isEmpty) continue
+                    val hit = LaserBeamEntity.intersectBeam(obb, startVec, endVec, margin) ?: continue
+                    val distance = startVec.distanceToSqr(hit.axis)
+                    if (distance >= closestDistance || !canReachAssistedHit(hit)) continue
+                    closestDistance = distance
+                    closestPart = obb.part
+                    hitPos = hit.axis
                 }
-
-                val acc = OBBHitter.getInstance(this)
-                acc.`sbw$setCurrentHitPart`(obb.part)
+                if (hitPos != null && closestPart != null) {
+                    reportPartHit(closestPart, hitPos)
+                    return EntityResult(entity, hitPos, headshot = false, legShot = false)
+                }
             }
         } else {
             var boundingBox = HitboxHelper.getCompensatedBoundingBox(entity, this.owner)
@@ -341,8 +345,20 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
             if (this.isBeast()) {
                 boundingBox = boundingBox.inflate(3.0)
             }
-
+            if (margin < 0.0) {
+                if (minOf(boundingBox.xsize, boundingBox.ysize, boundingBox.zsize) <= -2.0 * margin) return null
+                boundingBox = boundingBox.inflate(margin)
+            }
             hitPos = boundingBox.clip(startVec, endVec).orElse(null)
+            if (hitPos == null && margin > 0.0) {
+                val searchBounds = AABB(startVec, endVec).inflate(margin + 1e-7)
+                if (searchBounds.intersects(boundingBox)) {
+                    val hit = LaserBeamEntity.intersectBeam(boundingBox, startVec, endVec, margin)
+                    if (hit != null && canReachAssistedHit(hit)) {
+                        return EntityResult(entity, hit.axis, headshot = false, legShot = false)
+                    }
+                }
+            }
         }
 
         if (hitPos == null) {
@@ -361,6 +377,62 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
         }
 
         return EntityResult(entity, hitPos, headshot, legShot)
+    }
+
+    private fun reportPartHit(part: OBB.Part, pos: Vec3) {
+        val level = this.level()
+        if (level is ServerLevel) {
+            level.playSound(
+                null,
+                BlockPos.containing(pos),
+                ModSounds.HIT.get(),
+                SoundSource.PLAYERS,
+                1f,
+                1f
+            )
+            ParticleTool.sendParticle(
+                level,
+                ModParticleTypes.FIRE_STAR.get(),
+                pos.x,
+                pos.y,
+                pos.z,
+                2,
+                0.0,
+                0.0,
+                0.0,
+                0.2,
+                false
+            )
+            ParticleTool.sendParticle(
+                level,
+                ParticleTypes.SMOKE,
+                pos.x,
+                pos.y,
+                pos.z,
+                2,
+                0.0,
+                0.0,
+                0.0,
+                0.01,
+                false
+            )
+        }
+
+        val acc = OBBHitter.getInstance(this)
+        acc.`sbw$setCurrentHitPart`(part)
+    }
+
+    private fun canReachAssistedHit(hit: LaserBeamEntity.BeamIntersection): Boolean {
+        if (isPenetrating() || isBeast() || hit.axis.distanceToSqr(hit.contact) < 1e-10) return true
+        val context = ClipContext(hit.axis, hit.contact, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, this)
+        return rayTraceBlocks(level(), context, blockIgnorePredicate()).type == HitResult.Type.MISS
+    }
+
+    private fun blockIgnorePredicate(): Predicate<BlockState> = when {
+        isPenetrating() || isBeast() -> Predicate { true }
+        ProjectileConfig.PROJECTILE_DESTROY_BLOCKS.get() ->
+            IGNORE_LIST.and(Predicate { !it.`is`(ModTags.Blocks.BULLET_CAN_DESTROY) })
+        else -> IGNORE_LIST
     }
 
     override fun defineSynchedData() {
@@ -392,8 +464,7 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
                 rayTraceBlocksWithFluid(
                     level,
                     ClipContext(startVec, endVec, ClipContext.Block.COLLIDER, ClipContext.Fluid.ANY, this),
-                    if (this.isPenetrating() || this.isBeast()) Predicate { true } else if (ProjectileConfig.PROJECTILE_DESTROY_BLOCKS.get()) IGNORE_LIST.and(
-                        Predicate { input -> !input.`is`(ModTags.Blocks.BULLET_CAN_DESTROY) }) else IGNORE_LIST
+                    blockIgnorePredicate()
                 )
             var result: HitResult? = blockHitResult
 
@@ -401,12 +472,19 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
                 endVec = result.getLocation()
             }
 
-            val entityResults = findEntitiesOnPath(startVec, endVec)
+            val searchRadius = entityHitMargin
+            val entityResults = if (searchRadius > 0.0) {
+                findEntitiesOnPath(startVec, endVec, searchRadius, includeCompensatedPlayers = true)
+            } else {
+                findEntitiesOnPath(startVec, endVec)
+            }
             if (this.owner != null) {
                 entityResults.sortBy { it.hitVec.distanceTo(this.owner!!.position()) }
             }
 
             for (entityResult in entityResults) {
+                if (tryHealAlly(entityResult)) return
+
                 result = ExtendedEntityRayTraceResult(entityResult)
                 val resEntity = result.entity
                 val shooter = this.owner
@@ -689,6 +767,28 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
     fun randomVec(vec3: Vec3, spread: Double): Vec3 =
         randomSpreadVec(this.random, vec3, spread)
 
+    private fun damageAtCurrentSpeed(): Float =
+        damageValue * (deltaMovement.length() / velocityValue).coerceIn(0.0, 1.0).toFloat()
+
+    open fun tryHealAlly(hit: EntityResult): Boolean {
+        if (allyHealRatioValue <= 0f) return false
+        val shooter = owner ?: return false
+        val target = hit.entity.multipartRoot as? LivingEntity ?: return false
+        if (!target.isAlive || target === shooter || (shooter is Player && target.hasIndirectPassenger(shooter))) return false
+        val attacker = (shooter as? OwnableEntity)?.owner as? ServerPlayer ?: shooter as? LivingEntity ?: return false
+        if (target === attacker || !target.isAlliedTo(attacker)) return false
+
+        val hitMultiplier = when {
+            hit.headshot -> headShotValue
+            hit.legShot -> legShotValue
+            else -> 1f
+        }
+        val healing = damageAtCurrentSpeed() * hitMultiplier * allyHealRatioValue
+        if (healing.isFinite() && healing > 0f) target.heal(healing)
+        discard()
+        return true
+    }
+
     override fun onHitEntity(result: EntityHitResult) {
         if (result !is ExtendedEntityRayTraceResult) return
 
@@ -720,7 +820,7 @@ open class ProjectileEntity(entityType: EntityType<out ProjectileEntity>, level:
             hitShield(entity, result.location)
         }
 
-        this.damageValue *= (deltaMovement.length() / velocityValue).coerceIn(0.0, 1.0).toFloat()
+        this.damageValue = damageAtCurrentSpeed()
 
         this.damageValue -= shieldAbsorb(entity, result.location, this.damageValue)
         if (this.damageValue <= 0f) {

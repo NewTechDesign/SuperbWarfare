@@ -22,7 +22,7 @@ function modifyProperty(pmc, level, perkTag, gunData) {
     var bonus = Math.max(0, gunData.getLevel()) * Math.max(0, level) * BONUS_PER_LEVEL
     if (bonus <= 0) return
 
-    var increases = ["Damage", "ExplosionDamage", "ExplosionRadius", "MeleeDamage"]
+    var increases = ["Damage", "ExplosionDamage", "MeleeDamage"]
     for (var i = 0; i < increases.length; i++) {
         pmc.mul(increases[i], 1 + bonus)
     }
@@ -31,7 +31,7 @@ function modifyProperty(pmc, level, perkTag, gunData) {
     pmc.mul("RecoilX", reduction)
     pmc.mul("RecoilY", reduction)
 
-    var durations = ["NormalReloadTime", "EmptyReloadTime", "DrawTime", "ZoomTime"]
+    var durations = ["NormalReloadTime", "EmptyReloadTime", "BoltActionTime", "DrawTime", "ZoomTime"]
     for (var j = 0; j < durations.length; j++) {
         reduceDuration(pmc, durations[j], reduction)
     }
