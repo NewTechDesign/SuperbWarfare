@@ -7,6 +7,7 @@ import com.atsuishio.superbwarfare.data.gun.GunData
 import com.atsuishio.superbwarfare.data.vehicle.subdata.EngineType
 import com.atsuishio.superbwarfare.data.vehicle.subdata.VehicleType
 import com.atsuishio.superbwarfare.entity.vehicle.base.VehicleEntity
+import com.atsuishio.superbwarfare.entity.vehicle.utils.VehicleCameraBoneUtils
 import com.atsuishio.superbwarfare.init.ModItems
 import com.atsuishio.superbwarfare.init.ModMobEffects
 import com.atsuishio.superbwarfare.item.gun.GunItem
@@ -140,38 +141,16 @@ object ClientMouseHandler {
                 return
             }
 
-            var i = 0.0
-            if (vehicle.roll < 0) {
-                i = 1.0
-            } else if (vehicle.roll > 0) {
-                i = -1.0
-            }
-
-            if (Mth.abs(vehicle.roll) > 90) {
-                i *= (1 - (Mth.abs(vehicle.roll) - 90) / 90)
-            }
-
             if (player != vehicle.firstPassenger || vehicle.getSeatIndex(player) != 0) return
 
             if (notInGame) {
                 sendPacketToServer(MouseMoveMessage(0.0, 0.0))
+            } else if (ClientEventHandler.isFreeCam(player) || ClientEventHandler.isNacelleCam(player)) {
+                sendPacketToServer(MouseMoveMessage(0.0, 0.0))
             } else {
-                if (!(ClientEventHandler.isFreeCam(player) || ClientEventHandler.isNacelleCam(player))) {
-                    if (mc.options.cameraType == CameraType.FIRST_PERSON) {
-                        if (vehicle.computed().engineType != EngineType.TOM6) {
-                            sendPacketToServer(
-                                MouseMoveMessage(
-                                    (1 - abs(vehicle.roll) / 90) * lerpSpeedX + (abs(vehicle.roll) / 90) * lerpSpeedY * i,
-                                    (1 - abs(vehicle.roll) / 90) * lerpSpeedY + (abs(vehicle.roll) / 90) * lerpSpeedX * if (vehicle.roll < 0) -1.0 else 1.0
-                                )
-                            )
-                        }
-                    } else {
-                        sendPacketToServer(MouseMoveMessage(lerpSpeedX, lerpSpeedY))
-                    }
-                } else {
-                    sendPacketToServer(MouseMoveMessage(0.0, 0.0))
-                }
+                // 三轴全部本体局部操控：鼠标 X/Y 直接对应本体 yaw/pitch，
+                // 不再按 roll 做欧拉万向混合（既然引擎侧也是局部轴）。
+                sendPacketToServer(MouseMoveMessage(lerpSpeedX, lerpSpeedY))
             }
 
         }
@@ -219,7 +198,12 @@ object ClientMouseHandler {
         var yawDeg = dx * h
         var pitchDeg = dy * h * invert
 
-        if (mc.options.cameraType == CameraType.FIRST_PERSON) {
+        // 飞行器用相机屏幕轴（VehicleEntity.applyDirectTurretInput），不再做此欧拉混合；
+        // 其它载具保留原有车体 roll 补偿，避免坡面/侧倾时回归。
+        if (mc.options.cameraType == CameraType.FIRST_PERSON &&
+            vehicle.vehicleType != VehicleType.AIRPLANE &&
+            vehicle.vehicleType != VehicleType.HELICOPTER
+        ) {
             val roll = vehicle.roll
             val absRoll = abs(roll)
             if (absRoll > 1f) {
@@ -337,7 +321,10 @@ object ClientMouseHandler {
         if (player.vehicle is VehicleEntity) {
             val vehicle = player.vehicle as VehicleEntity
             val index = vehicle.getSeatIndex(player)
-            if (ClientEventHandler.isFreeCam(player) && vehicle.useAircraftCamera(index)) {
+            if (ClientEventHandler.isFreeCam(player) &&
+                (vehicle.useAircraftCamera(index) ||
+                    VehicleCameraBoneUtils.getThirdPersonBone(vehicle, index) != null)
+            ) {
                 return 0.0
             }
         }

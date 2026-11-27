@@ -1,5 +1,6 @@
 package com.atsuishio.superbwarfare.event
 
+import com.atsuishio.superbwarfare.Mod.Companion.loc
 import com.atsuishio.superbwarfare.api.event.ClientGunFireEvent
 import com.atsuishio.superbwarfare.api.event.ClientVehicleFireEvent
 import com.atsuishio.superbwarfare.capability.living.RadiationCapability
@@ -615,6 +616,7 @@ object ClientEventHandler {
 
     @JvmField
     var lastCameraType: CameraType? = null
+    var hasRemoteBinding = false
 
     @JvmField
     var cameraPitch: Float = 0f
@@ -733,6 +735,7 @@ object ClientEventHandler {
 
     @JvmField
     var keysCache: Short = 0
+    private var movementVehicle: VehicleEntity? = null
 
     /** 自动盘旋双击夺回操控权：上次按下前进键的tick */
     @JvmField
@@ -874,6 +877,8 @@ object ClientEventHandler {
 
     @SubscribeEvent
     fun clearGravityLensing(event: ClientPlayerNetworkEvent.LoggingOut) {
+        hasRemoteBinding = false
+        movementVehicle = null
         FlashbangOverlay.clear()
         MuzzleFlashRenderer.clear()
         resetLocalShotState()
@@ -992,6 +997,8 @@ object ClientEventHandler {
         }
     }
 
+    private val HANDSOME_GOGGLES_EFFECT = loc("shaders/post/handsome_goggles.json")
+
     @JvmStatic
     var handsomeGogglesActive: Boolean = false
 
@@ -1003,10 +1010,9 @@ object ClientEventHandler {
     fun handleHandsomeGoggles(player: Player) {
         val wearing = isWearingHandsomeGoggles(player)
         val isFirstPerson = mc.options.cameraType == CameraType.FIRST_PERSON
-        val shouldBeActive = wearing && isFirstPerson
+        val shouldBeActive = wearing && isFirstPerson && !DisplayConfig.ANTI_FLASH_MODE.get()
 
         if (shouldBeActive && !handsomeGogglesActive) {
-            handsomeGogglesActive = false  // reset so turnOn actually loads
             turnOnHandsomeGoggles()
         } else if (!shouldBeActive && handsomeGogglesActive) {
             turnOffHandsomeGoggles()
@@ -1015,14 +1021,17 @@ object ClientEventHandler {
 
     @JvmStatic
     fun turnOnHandsomeGoggles() {
+        if (DisplayConfig.ANTI_FLASH_MODE.get()) return
         handsomeGogglesActive = true
-        mc.gameRenderer.loadEffect(com.atsuishio.superbwarfare.Mod.loc("shaders/post/handsome_goggles.json"))
+        mc.gameRenderer.loadEffect(HANDSOME_GOGGLES_EFFECT)
     }
 
     @JvmStatic
     fun turnOffHandsomeGoggles() {
         handsomeGogglesActive = false
-        mc.gameRenderer.shutdownEffect()
+        if (mc.gameRenderer.currentEffect()?.name == HANDSOME_GOGGLES_EFFECT.toString()) {
+            mc.gameRenderer.shutdownEffect()
+        }
     }
 
     fun isBarrelSpinTriggered(stack: ItemStack): Boolean {
@@ -1130,9 +1139,10 @@ object ClientEventHandler {
     fun handleControlVehicle(player: Player, stack: ItemStack) {
         var keys: Short = 0
         val vehicle = player.vehicle
+        val drivenVehicle = (vehicle as? VehicleEntity)?.takeIf { it.firstPassenger === player }
 
         // 正在游戏内控制载具
-        if (!notInGame && (vehicle is VehicleEntity && vehicle.firstPassenger == player)) {
+        if (!notInGame && drivenVehicle != null) {
             if (ModKeyMappings.MOVE_LEFT.isDown) {
                 keys = keys or 0b000000001
             }
@@ -1162,7 +1172,7 @@ object ClientEventHandler {
             }
         }
 
-        if (keys != keysCache) {
+        if (keys != keysCache || drivenVehicle !== movementVehicle) {
             // 盘旋模式下阻止操控包发往服务端，但检测双击前进键夺回操控权
             val blockLoiter = vehicle is VehicleEntity
                     && vehicle.loiterActive
@@ -1192,6 +1202,7 @@ object ClientEventHandler {
                 }
             }
             keysCache = keys
+            movementVehicle = drivenVehicle
         }
 
         if (vehicle is VehicleEntity && vehicle.allowEjection(vehicle.getSeatIndex(player)) && ModKeyMappings.DISMOUNT.isDown()) {

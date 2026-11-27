@@ -1,0 +1,10 @@
+{
+  "RenderMounts": true,
+  "Models": [
+    {
+      "Model": "superbwarfare:models/bedrock/vehicle/drone.geo.json",
+      "Texture": "superbwarfare:textures/bedrock/vehicle/drone.png",
+      "EmissiveTexture": "superbwarfare:textures/bedrock/vehicle/drone_e.png"
+    }
+  ]
+}

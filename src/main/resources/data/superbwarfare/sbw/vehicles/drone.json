@@ -1,0 +1,69 @@
+{
+  "MaxHealth": 5,
+  "MaxEnergy": 24000,
+  "Type": "Helicopter",
+  "EngineType": "Drone",
+  "EngineInfo": {
+    "EnergyCostRate": 1,
+    "Increment": 1,
+    "Decrement": 1,
+    "PitchSpeed": 1,
+    "YawSpeed": 1,
+    "RollSpeed": 1,
+    "LiftSpeed": 1,
+    "Speed": 1,
+    "ClampPitch": 30,
+    "ClampRoll": 30,
+    "EngineSoundVolume": 0.55
+  },
+  "EngineSound": "superbwarfare:drone_engine",
+  "AllowFreeCam": true,
+  "ForceQuickPlacement": true,
+  "ContainerIcon": "superbwarfare:textures/gui/vehicle/type/rc.png",
+  "KeepChunkLoaded": true,
+  "CollisionLevel": {"Level": 0},
+  "Mass": 0.0005,
+  "RotateOffsetHeight": 0.1,
+  "VehicleContainerType": "Empty",
+  "MountSlots": [
+    {
+      "Id": "payload",
+      "Capacity": 20,
+      "ControlSeat": 0,
+      "Offset": [0, -0.11, 0],
+      "Definitions": [
+        "superbwarfare:rgo_grenade",
+        "superbwarfare:grenade_40mm",
+        "superbwarfare:medical_kit",
+        "superbwarfare:blu_43_mine",
+        "superbwarfare:mortar_shell",
+        "superbwarfare:c4_bomb",
+        "superbwarfare:rpg_rocket_standard",
+        "superbwarfare:rpg_rocket_tbg",
+        "superbwarfare:tm_62",
+        "superbwarfare:mounted_gun"
+      ]
+    }
+  ],
+  "Seats": [
+    {
+      "HidePassenger": true,
+      "IsEnclosed": false,
+      "BanHand": true,
+      "CanRotateHead": false,
+      "Position": [0, 0, 0],
+      "Sensitivity": [0, 0, 0],
+      "CameraBone": {
+        "Bone": "driver_camera",
+        "Direction": "driver_camera",
+        "ZoomBone": "driver_zoom_camera",
+        "ZoomDirection": "driver_zoom_camera",
+        "ThirdPersonBone": "driver_3p_camera"
+      }
+    }
+  ],
+  "DestroyInfo": {
+    "NoWreck": true,
+    "ExplodePassengers": false
+  }
+}
