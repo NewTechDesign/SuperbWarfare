@@ -74,6 +74,8 @@
     }
   ],
   "AvailablePerks": [
+    "superbwarfare:practice_makes_perfect",
+    "superbwarfare:crushing_force",
     "superbwarfare:vorpal_weapon",
     "superbwarfare:soul_reaver",
     "superbwarfare:fair_means",

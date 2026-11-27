@@ -5,10 +5,7 @@ import com.atsuishio.superbwarfare.entity.getValue
 import com.atsuishio.superbwarfare.entity.mixin.ICustomKnockback
 import com.atsuishio.superbwarfare.entity.setValue
 import com.atsuishio.superbwarfare.init.ModDamageTypes
-import com.atsuishio.superbwarfare.tools.EntityFindUtil
-import com.atsuishio.superbwarfare.tools.SeekTool
-import com.atsuishio.superbwarfare.tools.forceHurt
-import com.atsuishio.superbwarfare.tools.localPlayer
+import com.atsuishio.superbwarfare.tools.*
 import net.minecraft.core.particles.DustParticleOptions
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.network.syncher.EntityDataAccessor
@@ -35,11 +32,12 @@ import java.util.function.Consumer
 import kotlin.math.sqrt
 
 open class ReforgingGravityBallEntity(type: EntityType<out ReforgingGravityBallEntity>, level: Level) :
-    Projectile(type, level), IBulletProperties, BasicGeoProjectileEntity {
+    PerkAwareProjectile(type, level), BasicGeoProjectileEntity {
 
     private val animation = if (level.isClientSide) BasicProjectileAnimationInstance(this, true) else null
     private var damageValue = 12f
     private var explosionDamageValue = 80f
+    private var explosionPenetrationRatioValue: Float = CustomExplosion.DEFAULT_PENETRATION_RATIO
     private var projectileLife by PROJECTILE_LIFE
     private var age = 0
     private var gravityValue = 0.04f
@@ -153,6 +151,11 @@ open class ReforgingGravityBallEntity(type: EntityType<out ReforgingGravityBallE
         syncedAttackRadius = value.coerceIn(0f, 32f)
     }
 
+    override fun getExplosionPenetrationRatio() = explosionPenetrationRatioValue
+    override fun setExplosionPenetrationRatio(value: Float) {
+        explosionPenetrationRatioValue = value.coerceIn(0f, CustomExplosion.MAX_PENETRATION_RATIO)
+    }
+
     override fun getLife() = projectileLife
     override fun setLife(value: Int) {
         projectileLife = value.coerceAtLeast(1)
@@ -240,8 +243,16 @@ open class ReforgingGravityBallEntity(type: EntityType<out ReforgingGravityBallE
             )
             val hit = entityHit ?: blockHit
             if (hit.type != HitResult.Type.MISS && !EventHooks.onProjectileImpact(this, hit)) {
-                onHit(hit)
-                return
+                val attacker = shooter()
+                val accepted = when (hit) {
+                    is EntityHitResult -> dispatchEntityHit(hit.entity, hit.location, 0f, attacker = attacker)
+                    is BlockHitResult -> dispatchBlockHit(hit, attacker)
+                    else -> false
+                }
+                if (accepted) {
+                    onHit(hit)
+                    return
+                }
             }
         }
         setPos(nextPosition)
@@ -258,6 +269,7 @@ open class ReforgingGravityBallEntity(type: EntityType<out ReforgingGravityBallE
     override fun onHitEntity(hit: EntityHitResult) {
         if (level().isClientSide || anchored) return
         super.onHitEntity(hit)
+        applyAmmoEffects(hit.entity, shooter())
         anchorAt(hit.location)
     }
 
@@ -283,7 +295,7 @@ open class ReforgingGravityBallEntity(type: EntityType<out ReforgingGravityBallE
     /** Shared by server attraction, living-target damage and client-side player attraction. */
     fun canAffect(target: Entity): Boolean {
         val shooter = shooter()
-        val shooterUUID = getOwnerUUID()
+        val shooterUUID = getOwnerUUID() ?: shooter?.uuid
         return target !== this && target !is HangingEntity && target.isAlive && !target.isSpectator && target !== shooter
                 && target !is ReforgingGravityBallEntity
                 && (shooterUUID == null || target.uuid != shooterUUID)
@@ -301,8 +313,13 @@ open class ReforgingGravityBallEntity(type: EntityType<out ReforgingGravityBallE
         if (attackRadius <= 0.0) return
         val targets = level().getEntities(this, boundingBox.inflate(attackRadius), ::canAffect)
         if (targets.isEmpty()) return
+        val shooterUUID = getOwnerUUID() ?: owner?.uuid
         for (target in targets) {
-            if (target is Projectile && canConsume(target.boundingBox, position(), coreRadius)) target.discard()
+            if (target is Projectile && canConsume(target.boundingBox, position(), coreRadius) &&
+                (shooterUUID == null || target.owner?.uuid != shooterUUID)
+            ) {
+                target.discard()
+            }
         }
         val regularDamage = fieldActive && damageTick
         val damagedTargets = targets.filterIsInstance<LivingEntity>().filter {
@@ -321,7 +338,8 @@ open class ReforgingGravityBallEntity(type: EntityType<out ReforgingGravityBallE
     }
 
     private fun damageTargets(targets: List<LivingEntity>, finalPulse: Boolean = false) {
-        val source = ModDamageTypes.causeGravityDamage(level().registryAccess(), this, shooter())
+        val attacker = shooter()
+        val source = ModDamageTypes.causeGravityDamage(level().registryAccess(), this, attacker)
         for (target in targets) {
             if (!target.isAlive) continue
             val damage = if (canConsume(target.boundingBox, position(), coreRadius)) {
@@ -340,14 +358,14 @@ open class ReforgingGravityBallEntity(type: EntityType<out ReforgingGravityBallE
                     coreRadius
                 )
             }
-            if (damage <= 0f) continue
+            if (damage <= 0f || !dispatchEntityHit(target, target.boundingBox.center, damage, attacker = attacker)) continue
 
             val knockback = ICustomKnockback.getInstance(target)
             val previousStrength = knockback.`superbWarfare$getKnockbackStrength`()
             knockback.`superbWarfare$setKnockbackStrength`(0.0)
             try {
                 target.invulnerableTime = 0
-                target.forceHurt(source, damage)
+                if (target.forceHurt(source, damage)) applyAmmoEffects(target, attacker)
             } finally {
                 knockback.`superbWarfare$setKnockbackStrength`(previousStrength)
             }

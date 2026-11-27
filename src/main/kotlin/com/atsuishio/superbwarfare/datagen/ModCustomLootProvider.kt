@@ -274,6 +274,7 @@ class ModCustomLootProvider() : LootTableSubProvider {
                 ModItems.MINIGUN_BLUEPRINT weighted 3
                 ModItems.JAVELIN_BLUEPRINT weighted 3
                 ModItems.HANYANG_88_RE_BLUEPRINT weighted 3
+                ModItems.A_762_BLUEPRINT weighted 3
                 ModItems.MK_42_BLUEPRINT weighted 3
                 ModItems.MLE_1934_BLUEPRINT weighted 2
                 ModItems.HPJ_11_BLUEPRINT weighted 2
@@ -320,6 +321,7 @@ class ModCustomLootProvider() : LootTableSubProvider {
                 ModItems.MINIGUN_BLUEPRINT weighted 20
                 ModItems.JAVELIN_BLUEPRINT weighted 15
                 ModItems.HANYANG_88_RE_BLUEPRINT weighted 15
+                ModItems.A_762_BLUEPRINT weighted 15
                 ModItems.MK_42_BLUEPRINT weighted 10
                 ModItems.MLE_1934_BLUEPRINT weighted 10
                 ModItems.BL_132_BLUEPRINT weighted 7
@@ -392,6 +394,7 @@ class ModCustomLootProvider() : LootTableSubProvider {
                 ModItems.MINIGUN_BLUEPRINT weighted 5
                 ModItems.JAVELIN_BLUEPRINT weighted 5
                 ModItems.HANYANG_88_RE_BLUEPRINT weighted 5
+                ModItems.A_762_BLUEPRINT weighted 5
             }
         }
 
@@ -423,6 +426,7 @@ class ModCustomLootProvider() : LootTableSubProvider {
                     ModItems.CHARM_DOG_TAG,
                     ModItems.CHARM_CONTAINER,
                     ModItems.CHARM_M67_GRENADE,
+                    ModItems.CHARM_CAKE,
                 )
             }
         }
@@ -442,6 +446,7 @@ class ModCustomLootProvider() : LootTableSubProvider {
                     ModItems.CHARM_WITHER_SKELETON_SKULL,
                     ModItems.CHARM_ELDER_GUARDIAN,
                     ModItems.CHARM_MK_82,
+                    ModItems.CHARM_GOLDEN_APPLE,
                 )
             }
         }
@@ -477,6 +482,8 @@ class ModCustomLootProvider() : LootTableSubProvider {
                     ModItems.CHARM_CRYSTAL_POPCORN,
                     ModItems.CHARM_NETHER_STAR,
                     ModItems.CHARM_CONDUIT,
+                    ModItems.CHARM_GOLDEN_RINGO_GUN_KING_MEDAL,
+                    ModItems.CHARM_BEACON,
                 )
             }
         }
@@ -502,6 +509,10 @@ class ModCustomLootProvider() : LootTableSubProvider {
                     ModItems.CHARM_HIRU_HEAD,
                     ModItems.CHARM_SUI_CONTAINER,
                     ModItems.CHARM_SWISS_COIL,
+                    ModItems.CHARM_INSIGNIA_OF_THE_HEART_SEEKER,
+                    ModItems.CHARM_COOING_BELL,
+                    ModItems.CHARM_TEMPERED_FEATHER,
+                    ModItems.CHARM_RADIANT_VOW,
                 )
             }
         }
@@ -578,6 +589,7 @@ class ModCustomLootProvider() : LootTableSubProvider {
                     ModItems.MINIGUN_BLUEPRINT,
                     ModItems.JAVELIN_BLUEPRINT,
                     ModItems.HANYANG_88_RE_BLUEPRINT,
+                    ModItems.A_762_BLUEPRINT,
 
                     ModItems.MK_42_BLUEPRINT,
                     ModItems.MLE_1934_BLUEPRINT,

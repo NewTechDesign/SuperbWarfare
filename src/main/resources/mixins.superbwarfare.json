@@ -3,11 +3,11 @@
   "package": "com.atsuishio.superbwarfare.mixins",
   "compatibilityLevel": "JAVA_21",
   "refmap": "mixins.superbwarfare.refmap.json",
+  "plugin": "com.atsuishio.superbwarfare.mixins.plugin.MixinPlugin",
   "mixins": [
     "BeastMixin",
     "BlockStateMixin",
     "ClientboundSetPassengersPacketMixin",
-    "ClientLevelMixin",
     "EnchantedCountIncreaseFunctionMixin",
     "EntityMixin",
     "EntityOnGroundAccessor",
@@ -20,12 +20,11 @@
     "PlayerMixin",
     "ProjectileUtilMixin",
     "SteelPipeFallMixin",
-    "VillagerMixin"
+    "VillagerMixin",
+    "tacz.EntityUtilMixin"
   ],
   "client": [
-    "BlockLightEngineMixin",
     "CameraMixin",
-    "ClientLevelMixin",
     "ClientPacketListenerMixin",
     "ClientPlayerEntityMixin",
     "EntityRenderDispatcherMixin",
@@ -37,17 +36,15 @@
     "KeymappingMixin",
     "LevelRendererMixin",
     "LibraryMixin",
-    "LightEngineMixin",
-    "LightTextureMixin",
     "LivingEntityRendererMixin",
     "LocalPlayerMixin",
     "MinecraftMixin",
     "MouseHandlerMixin",
     "MultiPlayerGameModeMixin",
-    "OverlayTextureMixin",
+    "PlayerHandThermalMixin",
     "PlayerItemInHandLayerMixin",
-    "PlayerRendererMixin",
-    "PostPassMixin"
+    "PostPassMixin",
+    "SoundEngineMixin"
   ],
   "minVersion": "0.8",
   "injectors": {

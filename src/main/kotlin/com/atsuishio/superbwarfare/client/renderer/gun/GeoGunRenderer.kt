@@ -6,6 +6,8 @@ import com.atsuishio.superbwarfare.client.animation.AnimationCurves
 import com.atsuishio.superbwarfare.client.animation.gun.GeoGunAnimationInstance
 import com.atsuishio.superbwarfare.client.charm.CharmRuntime
 import com.atsuishio.superbwarfare.client.charm.CharmSnapshot
+import com.atsuishio.superbwarfare.client.lighting.FlashlightHandler
+import com.atsuishio.superbwarfare.client.lighting.GunMuzzleLightHandler
 import com.atsuishio.superbwarfare.client.model.attachment.BedrockAttachmentModel
 import com.atsuishio.superbwarfare.client.model.gun.GeoGunModel
 import com.atsuishio.superbwarfare.client.overlay.OverlayTraceHandler
@@ -21,6 +23,7 @@ import com.atsuishio.superbwarfare.client.renderer.scope.ScopeStencilRenderHelpe
 import com.atsuishio.superbwarfare.client.screens.WeaponEditMountTracker
 import com.atsuishio.superbwarfare.client.screens.WeaponEditScreen
 import com.atsuishio.superbwarfare.compat.acceleratedrendering.AcceleratedRenderingCompat
+import com.atsuishio.superbwarfare.compat.shader.ShaderCompat
 import com.atsuishio.superbwarfare.config.client.DisplayConfig
 import com.atsuishio.superbwarfare.data.attachment.*
 import com.atsuishio.superbwarfare.data.gun.*
@@ -29,6 +32,7 @@ import com.atsuishio.superbwarfare.data.gun.GunData.Companion.from
 import com.atsuishio.superbwarfare.data.gun.subdata.ScopeStackEntry
 import com.atsuishio.superbwarfare.data.gun.value.AttachmentType
 import com.atsuishio.superbwarfare.data.gun_skin.GunSkin
+import com.atsuishio.superbwarfare.data.gun_skin.GunSkinInfo
 import com.atsuishio.superbwarfare.event.ClientEventHandler
 import com.atsuishio.superbwarfare.event.DeployedWeaponHandler
 import com.atsuishio.superbwarfare.event.ShieldRuntime
@@ -43,7 +47,10 @@ import com.atsuishio.superbwarfare.resource.model.AttachmentModelReloadListener
 import com.atsuishio.superbwarfare.resource.model.GunModelReloadListener
 import com.atsuishio.superbwarfare.script.GunScriptManager
 import com.atsuishio.superbwarfare.script.ScriptTransform
-import com.atsuishio.superbwarfare.tools.*
+import com.atsuishio.superbwarfare.tools.BedrockBoneCoordinateTool
+import com.atsuishio.superbwarfare.tools.BoneScreenPoint
+import com.atsuishio.superbwarfare.tools.deltaFrameTime
+import com.atsuishio.superbwarfare.tools.localPlayer
 import com.github.mcmodderanchor.simplebedrockmodel.v1.client.animation.IFPAnimationInstance
 import com.github.mcmodderanchor.simplebedrockmodel.v1.client.handler.FirstPersonRenderHandler
 import com.github.mcmodderanchor.simplebedrockmodel.v1.client.renderer.BedrockModelRenderTypes
@@ -78,14 +85,9 @@ import net.minecraft.world.item.ItemDisplayContext
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.phys.Vec3
 import net.neoforged.neoforge.capabilities.Capabilities
-import org.joml.Matrix3f
-import org.joml.Matrix4f
-import org.joml.Quaternionf
-import org.joml.Vector2f
-import org.joml.Vector3f
+import org.joml.*
 import org.lwjgl.glfw.GLFW
 import org.lwjgl.opengl.GL11
-import java.lang.Math
 import java.util.*
 import kotlin.math.atan2
 import kotlin.math.ceil
@@ -95,6 +97,7 @@ import kotlin.math.roundToInt
 open class GeoGunRenderer : AbstractGeoItemRendererV2() {
 
     protected val capturedRenderPose = mutableMapOf<InteractionHand, Matrix4f>()
+    private val shotParticles = mutableMapOf<InteractionHand, MutableList<ResourceLocation>>()
     protected val lastBoneTransforms = mutableMapOf<InteractionHand, MutableMap<String, Matrix4f>>()
     protected val muzzleEmitterLocators =
         mutableMapOf<InteractionHand, MutableMap<ParticleEmitterInstance, String>>()
@@ -152,9 +155,12 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
 
     override fun createAnimationInstance(
         stack: ItemStack,
-        entity: Entity,
+        entity: Entity?,
         hand: InteractionHand
     ): IFPAnimationInstance {
+        // SBM 1.21 的 FirstPersonRenderHandler.createInstance 传的是
+        // Minecraft.getCameraEntity()，在切维度/重生/世界未就绪的 client tick 里可能为 null；
+        // GeoGunAnimationInstance 本身不依赖这个 entity，直接透传即可，不能声明成非空。
         return GeoGunAnimationInstance(stack, entity, hand)
     }
 
@@ -298,7 +304,22 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         var shown: Matrix4f? = null
     )
 
-    override fun renderModel(
+    protected data class SelectedGunModel(val model: GeoGunModel, val texture: ResourceLocation, val useLod: Boolean)
+
+    /** Keep model/texture selection together; a missing LOD must not hide the gun. */
+    protected fun selectGunModel(resource: ModelResource, skin: GunSkinInfo?, preferLod: Boolean): SelectedGunModel? {
+        val activeSkin = skin?.takeIf { it.texture != null }
+        if (preferLod && resource.hasLOD() && (activeSkin == null || activeSkin.lodTexture != null)) {
+            val texture = activeSkin?.lodTexture ?: resource.getLODTexture(1)
+            val model = GeoGunModel.create(resource, 1)
+            if (model != null && texture != null) return SelectedGunModel(model, texture, true)
+        }
+        val model = GeoGunModel.create(resource) ?: return null
+        val texture = activeSkin?.texture ?: resource.texture ?: return null
+        return SelectedGunModel(model, texture, false)
+    }
+
+    public override fun renderModel(
         poseStack: PoseStack,
         transformType: ItemDisplayContext,
         stack: ItemStack,
@@ -308,35 +329,22 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         partialTick: Float
     ) {
         handledScopeAttachment = null
+        if (StaticGunRenderer.tryRender(stack, transformType, poseStack, bufferSource, packedLight, packedOverlay)) return
         scopedBeamTailBone = null
         if (transformType.firstPerson()) {
             lastBoneTransforms[handForContext(transformType)]?.clear()
+            shotParticles[handForContext(transformType)]?.clear()
         }
 
-        if (transformType.firstPerson() || transformType == ItemDisplayContext.THIRD_PERSON_RIGHT_HAND) {
-            LaserSightCapture.beginFrame()
-        }
+        LaserSightCapture.beginFrame()
 
         val resource = GunResource.compute(stack)
         val modelResource = resource.getModel()
 
-        val skin = GunSkin.getSkin(stack)?.takeIf { it.texture != null }
-        val useLod = !transformType.firstPerson()
-                && (skin == null || skin.lodTexture != null)
-                && !GunMountContext.active
-                && DisplayConfig.ENABLE_GUN_LOD.get()
-                && !RenderDistanceHelper.isInGui()
-        val model = if (useLod) {
-            GeoGunModel.create(modelResource, 1)
-        } else {
-            GeoGunModel.create(modelResource)
-        } ?: return
-
-        val texture = (if (useLod) skin?.lodTexture else skin?.texture) ?: if (useLod) {
-            modelResource.getLODTexture(1)
-        } else {
-            modelResource.texture
-        } ?: return
+        val selected = selectGunModel(modelResource, GunSkin.getSkin(stack), StaticGunRenderer.shouldUseLOD(transformType)) ?: return
+        val model = selected.model
+        val texture = selected.texture
+        val useLod = selected.useLod
 
         model.renderHand = transformType.firstPerson()
         subWeaponFollow = null
@@ -347,7 +355,8 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         idleViewAnchor = null
         if (transformType.firstPerson()) {
             val hand = handForContext(transformType)
-            val pose = FirstPersonRenderHandler.getActiveAnimationInstance(hand)?.cachedPose
+            val instance = FirstPersonRenderHandler.getActiveAnimationInstance(hand)
+            val pose = instance?.cachedPose
             // 副武器换弹：让**主武器（含玩家手臂）**跟着副武器动画的 `root` 运动走
             val follow = resolveSubWeaponFollowPose(stack, model)
             subWeaponFollow = follow
@@ -379,7 +388,8 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
                 sprintOffset.y,
                 sprintOffset.z,
                 // 有 Animation.Run 的枪不走程序性奔跑（连进出过渡片段一起关）
-                resource.useCustomSprintAnimation || resource.animation?.run != null
+                resource.useCustomSprintAnimation || resource.animation?.run != null ||
+                        (instance as? GeoGunAnimationInstance)?.ownsSprint == true
             )
 
             val shootRecoil = resource.shootRecoil
@@ -428,6 +438,13 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             resolveMuzzleAttachmentMuzzleTransform(stack, model, it)
         }
         val muzzleFlashScale = resolveMuzzleAttachmentMuzzleFlashScale(stack)
+        val firstPersonHand = if (transformType.firstPerson()) handForContext(transformType) else null
+        val deployedFirstPerson = firstPersonHand != null && ActiveGun.isDeployed(from(stack), true)
+        val firstPersonAnimation = firstPersonHand?.let { FirstPersonRenderHandler.getActiveAnimationInstance(it) as? GeoGunAnimationInstance }
+        val subWeaponFire = firstPersonHand != null && (deployedFirstPerson ||
+                ClientEventHandler.subWeaponFireRotTimer > 0.0 || firstPersonAnimation?.isSubWeaponFire() == true)
+        var subWeaponFlare: Matrix4f? = null
+        var firstPersonAnchor: Matrix4f? = null
 
         val canStencil = transformType.firstPerson()
 //                && !OculusCompat.isRenderingShadowPass()
@@ -524,8 +541,20 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             // **中途抛异常**就会跳过那个复位，共享实例上的这几根骨骼会一直留在 hidden 直到下次资源重载。
             val savedOcularBones = if (builtinScopeActive) model.builtinScopeRenderer.hideOcularBones() else null
             try {
+                if (firstPersonHand != null) {
+                    if (subWeaponFire) subWeaponFlare = resolveSubWeaponFlareTransform(stack, model)
+                    firstPersonAnchor = MuzzleFlashRenderer.resolveFlareTransform(
+                        model, stack, attachmentMuzzleTransform, subWeaponFlare, deployedFirstPerson
+                    )
+                }
+                val anchor = firstPersonAnchor
+                val modelBuffers = if (anchor != null && firstPersonHand == InteractionHand.MAIN_HAND &&
+                    localFirstPersonHand == InteractionHand.MAIN_HAND
+                ) {
+                    GunMuzzleLightHandler.shadeFirstPersonModel(bufferSource, model.instance, poseStack.last().pose(), anchor)
+                } else bufferSource
                 model.renderToBuffer(
-                    poseStack, bufferSource, texture, packedLight, packedOverlay,
+                    poseStack, modelBuffers, texture, packedLight, packedOverlay,
                     resolveGunAmmoReadout(stack, resource),
                     // ⚠ 必须在 `renderAttachments` 之后算：副武器换弹那份锚点是在里面填的，优先级更高
                     resolveArmAnchorsForDraw(model, transformType),
@@ -549,7 +578,7 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
                 captureMountScreenPositions(stack, poseStack, model)
             }
 
-            // 激光束：本地玩家第一人称 + 第三人称右手（出光口已在 `renderAttachments` 里采完）。
+            // 激光束：本地玩家第一人称 + 第三人称主手（出光口已在 `renderAttachments` 里采完）。
             //
             // ⚠ 位置就在**模板窗口内部**（上面那句 `GL_EQUAL 0` 还生效，收尾的
             // `finishStencilCulling` 排在下面）：高倍镜（`scope`）里枪身与出光的那件配件都被
@@ -559,8 +588,20 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             // ⚠ 必须**留在上面那个 `vanillaAcceleration` 块内部**：光束的格式（`ITEM_ENTITY_TARGET`
             // 那一族）正好落在 AR 会加速的那批格式里 —— 走出这个块，它的顶点会被 AR 推迟到帧尾，
             // 那时模板状态早就换了，光束就会整根盖到镜筒里外。
-            if (transformType.firstPerson() || transformType == ItemDisplayContext.THIRD_PERSON_RIGHT_HAND) {
-                LaserSightRenderer.render(poseStack, bufferSource, partialTick)
+            LaserSightRenderer.render(poseStack, bufferSource, partialTick)
+            // SIGHT reticles are composited after the gun, hands and attachments, while AR is
+            // still on its vanilla pipeline. The original ocular stencil clips them to the lens.
+            if (stencilScope?.scopeMode?.isSight() == true && !stencilScope.scopeMode.thermal) {
+                poseStack.pushPose()
+                try {
+                    mulPoseWithNormal(poseStack, stencilScope.slotTransform)
+                    stencilScope.model.renderSightReticleOverlay(
+                        poseStack, bufferSource as MultiBufferSource.BufferSource, stencilScope.texture,
+                        packedLight, stencilScope.scopeMode, resolveAmmoReadout(stack, stencilScope)
+                    )
+                } finally {
+                    poseStack.popPose()
+                }
             }
         } finally {
             if (vanillaAcceleration) {
@@ -568,34 +609,29 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             }
         }
 
-        if (transformType.firstPerson()) {
-            val hand = handForContext(transformType)
-            val animation = FirstPersonRenderHandler.getActiveAnimationInstance(hand) as? GeoGunAnimationInstance
-
-            // 副武器开火期间（部署中，或副武器那一支开火动画正在播）才解析它的枪口骨骼：谁被切出来，火就归谁
-            val subWeaponFire = ActiveGun.isDeployed(from(stack), true) ||
-                    ClientEventHandler.subWeaponFireRotTimer > 0.0 ||
-                    animation?.isSubWeaponFire() == true
-            val subWeaponFlare = if (subWeaponFire) resolveSubWeaponFlareTransform(stack, model) else null
+        if (firstPersonHand != null) {
+            val hand = firstPersonHand
             val subWeaponFlashScale = if (subWeaponFire) resolveSubWeaponMuzzleFlashScale(stack) else 1.0f
-
-            MuzzleFlashRenderer.render(
-                poseStack,
-                model,
-                stack,
-                bufferSource,
-                attachmentMuzzleTransform,
-                muzzleFlashScale,
-                subWeaponFlare,
-                subWeaponFlashScale
-            )
+            val deployed = deployedFirstPerson
+            val anchor = firstPersonAnchor
+            val holder = localPlayer
+            if (holder != null && localFirstPersonHand == InteractionHand.MAIN_HAND && hand == InteractionHand.MAIN_HAND) {
+                MuzzleFlashRenderer.renderShot(holder, stack, true, poseStack, bufferSource, anchor,
+                    if (deployed) subWeaponFlashScale else muzzleFlashScale, partialTick) { fx, smoke, sparks ->
+                    MuzzleParticles.layers(fx, smoke, sparks, 0.0) { effect ->
+                        shotParticles.getOrPut(hand) { mutableListOf() }.add(effect)
+                    }
+                }
+            }
 
             // 枪口焰刚从这个挂点钻出来，顺手把同一个挂点交给子弹：
             // 每帧交一份"枪管现在指向哪儿"，开火窗口里再交一份"虚拟出膛点"的偏移
             submitMuzzleSample(poseStack.last().pose(), model, stack, subWeaponFlare, attachmentMuzzleTransform)
 
             val rootTransform = model.getRootBone()?.let { model.getGlobalTransform(it.index()) } ?: Matrix4f()
-            val rootUp = Matrix4f(poseStack.last().pose()).mul(rootTransform)
+            // 准星 roll 是屏幕空间的：1.21 的手部 pose 预乘了相机旋转，必须先还原成 1.20 的
+            // view 空间，否则 atan2 算出来的是世界朝向，准星转动会随玩家偏航角变化。
+            val rootUp = BedrockBoneCoordinateTool.modelToView(poseStack.last().pose()).mul(rootTransform)
                 .transformDirection(0f, 1f, 0f, Vector3f())
             ClientRenderHandler.gunRoll = atan2(rootUp.x, rootUp.y)
 
@@ -604,14 +640,28 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             val transforms = lastBoneTransforms.getOrPut(hand) { mutableMapOf() }
             // 副武器开火时枪口定位点改挂副武器模型自己的枪口，且不注册枪口配件的 `MUZZLE_BONE`
             // （`resolveMuzzleLocator` 优先取它，留着会把榴弹的枪口烟吸到枪管前端去）
-            val subWeaponMuzzle = subWeaponFlare?.takeIf { animation?.isSubWeaponFire() == true }
-            if (subWeaponMuzzle != null) {
-                transforms[FLARE_BONE] = Matrix4f(subWeaponMuzzle)
+            anchor?.let { transforms[MuzzleParticles.ANCHOR] = Matrix4f(it) }
+            if (deployed) {
+                subWeaponFlare?.let { transforms[FLARE_BONE] = Matrix4f(it) }
             } else {
                 for (boneName in listOf(FLARE_BONE, MUZZLE_FLASH_BONE)) {
                     model.getGlobalTransform(boneName)?.let { transforms[boneName] = Matrix4f(it) }
                 }
                 attachmentMuzzleTransform?.let { transforms[MUZZLE_BONE] = Matrix4f(it) }
+            }
+        } else if ((transformType == ItemDisplayContext.THIRD_PERSON_RIGHT_HAND ||
+                    transformType == ItemDisplayContext.THIRD_PERSON_LEFT_HAND) && GunRenderContext.isMainArm()) {
+            val holder = GunRenderContext.entity()
+            if (holder != null) {
+                val deployed = ActiveGun.isDeployed(from(stack), true)
+                val sub = if (deployed) resolveSubWeaponFlareTransform(stack, model) else null
+                val anchor = MuzzleFlashRenderer.resolveFlareTransform(model, stack, attachmentMuzzleTransform, sub, deployed)
+                if (MuzzleFlashRenderer.hasShot(holder)) {
+                    MuzzleFlashRenderer.renderShot(holder, stack, false, poseStack, bufferSource, anchor,
+                        if (deployed) resolveSubWeaponMuzzleFlashScale(stack) else muzzleFlashScale, partialTick) { fx, smoke, sparks ->
+                        MuzzleParticles.spawnWorld(Matrix4f(poseStack.last().pose()).mul(anchor!!), fx, smoke, sparks)
+                    }
+                }
             }
         }
 
@@ -630,19 +680,21 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         stack: ItemStack,
     ) {
         val info = definition.laser ?: return
+        if (ShaderCompat.isRenderingShadowPass()) return
 
         val firstPerson = transformType.firstPerson()
         if (firstPerson) {
             if (localFirstPersonHand == null) return
-        } else if (transformType != ItemDisplayContext.THIRD_PERSON_RIGHT_HAND) {
-            return
+        } else {
+            if (transformType != ItemDisplayContext.THIRD_PERSON_RIGHT_HAND &&
+                transformType != ItemDisplayContext.THIRD_PERSON_LEFT_HAND
+            ) return
+            if (!GunRenderContext.isMainArm()) return
         }
-        // 阴影 pass 里画激光只会往阴影贴图里写颜色（与吊坠那边同一个判据）
-        // TODO OculusCompat
-//        if (OculusCompat.isRenderingShadowPass()) return
 
         val data = from(stack)
         val preview = attachmentEditPreview(stack, data, slot)
+        if (AttachmentLightState.modeOf(data, slot) != FlashlightMode.LASER) return
         LaserSightCapture.capture(
             info = info,
             colorRgb = info.resolveColorRgb(preview?.laserColor ?: data.attachment.getLaserColor(slot)),
@@ -650,6 +702,69 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             poseMatrix = poseMatrix,
             locatorTransform = attachmentModel.getLocatorTransform(info.locator),
         )
+    }
+
+    private fun captureFlashlight(
+        transformType: ItemDisplayContext,
+        poseMatrix: Matrix4f,
+        attachmentModel: BedrockAttachmentModel,
+        definition: AttachmentDefinition,
+        stack: ItemStack,
+        slot: AttachmentType,
+    ) {
+        val info = definition.flashlight ?: return
+        if (ShaderCompat.isRenderingShadowPass()) return
+
+        val firstPerson = transformType.firstPerson()
+        if (firstPerson) {
+            if (localFirstPersonHand != InteractionHand.MAIN_HAND ||
+                handForContext(transformType) != InteractionHand.MAIN_HAND
+            ) return
+        } else {
+            if (transformType != ItemDisplayContext.THIRD_PERSON_RIGHT_HAND &&
+                transformType != ItemDisplayContext.THIRD_PERSON_LEFT_HAND
+            ) return
+            if (!GunRenderContext.isMainArm()) return
+        }
+
+        // 定位点优先取模型里显式定义的 locator；若模型直接用骨骼当定位点（没有 locators 表），
+        // 退回该骨骼的全局变换——这样骨骼自身的旋转会直接驱动光轴向（Bedrock 约定 -Z 为前方）。
+        val emitterTransform = attachmentModel.getLocatorTransform(info.locator)
+            ?: attachmentModel.getGlobalTransform(info.locator)
+            ?: return
+        val matrix = if (firstPerson) BedrockBoneCoordinateTool.modelToView(poseMatrix) else Matrix4f(poseMatrix)
+        matrix.mul(emitterTransform)
+        val point = matrix.getTranslation(Vector3f())
+        val axis = matrix.transformDirection(0f, 0f, -1f, Vector3f())
+        if (axis.lengthSquared() < 1e-8f) return
+        axis.normalize()
+
+        val holder = if (firstPerson) localPlayer else GunRenderContext.entity()
+        holder ?: return
+        val camera = Minecraft.getInstance().gameRenderer.mainCamera
+
+        val worldOrigin: Vec3
+        val worldDirection: Vec3
+        if (firstPerson) {
+            // 与第一人称枪口采样一致：先修正手部 FOV 深度，再用相机旋转逆矩阵转到世界轴
+            val rotationInverse = cameraRotationInverse()
+            val adjusted = BedrockBoneCoordinateTool.adjustViewDepthForFov(
+                Vec3(point.x.toDouble(), point.y.toDouble(), point.z.toDouble()),
+                ClientEventHandler.handFov.toFloat(),
+                ClientEventHandler.fov.toFloat()
+            )
+            val offset = rotationInverse.transformPosition(
+                Vector3f(adjusted.x.toFloat(), adjusted.y.toFloat(), adjusted.z.toFloat())
+            )
+            val worldAxis = rotationInverse.transformDirection(axis, Vector3f())
+            worldOrigin = camera.position.add(Vec3(offset.x.toDouble(), offset.y.toDouble(), offset.z.toDouble()))
+            worldDirection = Vec3(worldAxis.x.toDouble(), worldAxis.y.toDouble(), worldAxis.z.toDouble())
+        } else {
+            // 第三人称的 PoseStack 已对齐世界坐标轴，位置只需加上相机偏移。
+            worldOrigin = camera.position.add(point.x.toDouble(), point.y.toDouble(), point.z.toDouble())
+            worldDirection = Vec3(axis.x.toDouble(), axis.y.toDouble(), axis.z.toDouble())
+        }
+        FlashlightHandler.sample(holder, stack, slot, worldOrigin, worldDirection)
     }
 
     open fun renderAttachments(
@@ -668,7 +783,7 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         renderScopeAttachment(stack, model, poseStack, bufferSource, packedLight, packedOverlay)
         renderStock(stack, model, poseStack, bufferSource, packedLight, packedOverlay)
         renderGripHandGuard(stack, model)
-        renderGripAttachment(stack, model, poseStack, bufferSource, packedLight, packedOverlay)
+        renderGripAttachment(stack, model, transformType, poseStack, bufferSource, packedLight, packedOverlay)
         renderOemScope(stack, model)
         renderOemMuzzle(stack, model)
         renderMuzzleAttachment(stack, model, poseStack, bufferSource, packedLight, packedOverlay)
@@ -682,7 +797,9 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             packedOverlay,
             handForContext(transformType)
         )
-        LaserBeamRenderer.captureMuzzle(poseStack, model, transformType, scopedBeamTailBone)
+        if (!transformType.firstPerson() || localFirstPersonHand == InteractionHand.MAIN_HAND) {
+            LaserBeamRenderer.captureMuzzle(poseStack, model, transformType, scopedBeamTailBone)
+        }
     }
 
     /**
@@ -712,9 +829,9 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             val mountTransform = model.getGlobalTransform(boneName) ?: continue
             val attachmentModel = AttachmentModelReloadListener.getModel(modelPath) ?: continue
 
-            // 副武器自己的换弹动画（由宿主枪的动画实例推进）：取姿态、应用、复位。
+            // 只在第一人称取副武器换弹姿态，与宿主枪的跟随动画使用同一视角条件。
             // 挂点变换取自宿主枪（不含附件姿态），姿态在挂点之内、按附件模型自己的骨骼应用
-            val subWeaponAnimation = if (slot.type == AttachmentType.SUBWEAPON) {
+            val subWeaponAnimation = if (transformType.firstPerson() && slot.type == AttachmentType.SUBWEAPON) {
                 FirstPersonRenderHandler.getActiveAnimationInstance(hand) as? GeoGunAnimationInstance
             } else {
                 null
@@ -762,7 +879,7 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
                         attachmentModel,
                         definition,
                         boneName,
-                        poseStack.last().pose(),
+                        BedrockBoneCoordinateTool.modelToView(poseStack.last().pose()),
                         cameraRotationInverse(),
                         hand
                     )
@@ -775,6 +892,16 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
                     definition,
                     slot.type,
                     stack,
+                )
+                // 手电出光口：导轨上的二合一/纯手电配件走通用槽位，必须和激光一样在这里采集，
+                // 否则只有 GRIP 槽（垂直握把）的手电会亮。
+                captureFlashlight(
+                    transformType,
+                    poseStack.last().pose(),
+                    attachmentModel,
+                    definition,
+                    stack,
+                    slot.type,
                 )
                 // 枪盾：耐久空的破损态藏掉盾面骨骼
                 shieldHidden = definition.shield != null && hideBrokenShield(attachmentModel, stack)
@@ -908,7 +1035,10 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         val definition = top.definition ?: return null
         val scopeInfo = definition.scopeInfo ?: return null
         val scopeModeIndex = data.attachment.scopeMode(AttachmentType.SCOPE)
-        val scopeMode = scopeInfo.mode(scopeModeIndex)
+        // 热融合开关关闭时，把这一档按普通光学镜处理（只影响镜内热成像，倍率/分划等数据不变）
+        val scopeMode = scopeInfo.mode(scopeModeIndex).let {
+            if (it.thermal && !ClientEventHandler.scopeThermalEnabled) it.copy(thermal = false) else it
+        }
         val companionSightMode = if (scopeMode.isScope()) {
             scopeInfo.modes.firstOrNull { it.isSight() }
         } else {
@@ -953,8 +1083,9 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             val storage = stack.getCapability(Capabilities.EnergyStorage.ITEM)
             val stored = storage?.energyStored ?: 0
             val capacity = storage?.maxEnergyStored ?: 0
-            // 每发 0 FE 等于永远打不完，夹到 1 让发数退化成剩余能量点数，也避免除零
-            val cost = gun.primaryAmmoCostPerShoot().coerceAtLeast(1)
+            // 每发 0 FE 等于永远打不完，夹到 1 让发数退化成剩余能量点数，也避免除零；
+            // 声明了 `FuelPerAmmo` 的枪（如带背包连弹夹的 devotion）每发要按折算量扣电
+            val cost = gun.energyPerShot()
             return AmmoReadout(
                 bars,
                 texts,
@@ -1223,6 +1354,7 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
     open fun renderGripAttachment(
         stack: ItemStack,
         model: GeoGunModel,
+        transformType: ItemDisplayContext,
         poseStack: PoseStack,
         bufferSource: MultiBufferSource,
         packedLight: Int,
@@ -1236,6 +1368,10 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         mulPoseWithNormal(
             poseStack,
             Matrix4f(mountTransform).mul(attachmentTransform(stack, AttachmentType.GRIP, definition))
+        )
+
+        captureFlashlight(
+            transformType, poseStack.last().pose(), attachmentModel, definition, stack, AttachmentType.GRIP
         )
         attachmentModel.renderToBuffer(
             poseStack, bufferSource, texture, packedLight, packedOverlay,
@@ -1358,7 +1494,7 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         resolveAttachmentLocalTransform(stack, AttachmentType.MUZZLE)
 
     /** 所有渲染、出光口与瞄准锚点都用相同顺序：挂点 × 实例调整 × 配件基础旋转。 */
-    private fun attachmentTransform(
+    protected fun attachmentTransform(
         stack: ItemStack,
         type: AttachmentType,
         definition: AttachmentDefinition
@@ -1568,7 +1704,7 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
 
         val animation = FirstPersonRenderHandler.getActiveAnimationInstance(hand) as? GeoGunAnimationInstance
         // 宿主枪自己换弹/近战 → 让位。状态还没解析出来（等同没有主武器动画）时照旧接管。
-        if (animation?.currentGunState?.takesHandAway == true) return
+        if (animation?.takesHands == true) return
 
         val (slot, definition) = findSubWeapon(data) ?: return
         val modelPath = definition.modelOf(data, slot.type) ?: return
@@ -1716,7 +1852,7 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         val end = clip.specifiedEndTimeS
         if (end <= 0f) return
 
-        val data = GunData.from(stack)
+        val data = from(stack)
         val local = holder === Minecraft.getInstance().player
         val spinning = if (local) ClientEventHandler.isBarrelSpinTriggered(stack)
         else PlayerSpinState.isSpinning(holder)
@@ -1881,61 +2017,49 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         stack: ItemStack,
         hand: InteractionHand
     ) {
-        val resource = GunResource.compute(stack)
-        if (!resource.hasSmoke) return
-
+        val animation = FirstPersonRenderHandler.getActiveAnimationInstance(hand) as? GeoGunAnimationInstance
+        val events = animation?.consumePendingParticles().orEmpty()
+        val pending = shotParticles.remove(hand).orEmpty()
         val basePose = capturedRenderPose[hand] ?: return
         val boneTransforms = lastBoneTransforms[hand] ?: return
-        if (boneTransforms.isEmpty()) return
-
-        val animation = FirstPersonRenderHandler.getActiveAnimationInstance(hand) as? GeoGunAnimationInstance ?: return
+        val active = ActiveGun.stackOf(from(stack), true)
+        val resource = GunResource.compute(active)
         val system = FirstPersonRenderHandler.getParticleSystem()
         val newEmitters = ArrayList<ParticleEmitterInstance>()
         val locators = muzzleEmitterLocators.getOrPut(hand) { WeakHashMap() }
 
-        for (data in animation.consumePendingParticles()) {
-            val definition = ParticleDefinitionLoader.getInstance().getDefinition(data.effect()) ?: continue
+        fun spawn(effect: ResourceLocation, locator: String?) {
+            if (locator == null || locator !in boneTransforms || system.emitters.size >= 64) return
+            val definition = ParticleDefinitionLoader.getInstance().getDefinition(effect) ?: return
             val emitter = system.addEmitter(definition, hand)
-            val smoke = resource.smoke
-            val shotRandom = Math.random().toFloat()
-            val sizeJitter = 1f - smoke.randomSize + shotRandom * 2f * smoke.randomSize
-            val growthJitter = 1f - smoke.randomGrowth + shotRandom * 2f * smoke.randomGrowth
-            val lifetimeJitter = 1f - smoke.randomLifetime + shotRandom * 2f * smoke.randomLifetime
-            val speedJitter = 1f - smoke.randomSpeed + shotRandom * 2f * smoke.randomSpeed
-            val countJitter = 1f - smoke.randomCount + shotRandom * 2f * smoke.randomCount
-            val opacityJitter = 1f - smoke.randomOpacity + shotRandom * 2f * smoke.randomOpacity
-
-            emitter.setVariable("smoke_size", smoke.size * sizeJitter)
-            emitter.setVariable("smoke_growth", smoke.growth * growthJitter)
-            emitter.setVariable("smoke_lifetime", smoke.lifetime * lifetimeJitter)
-            emitter.setVariable("smoke_speed", smoke.speed * speedJitter)
-            emitter.setVariable(
-                "smoke_count",
-                (smoke.count * countJitter).roundToInt().coerceAtLeast(1).toFloat()
-            )
-            emitter.setVariable("smoke_opacity", smoke.opacity * opacityJitter)
-            emitter.setVariable("smoke_drag", resource.smoke.drag)
-            val locator = resolveMuzzleLocator(data, boneTransforms)
-            if (locator == null) {
-                emitter.setRemoved(true)
-                continue
-            }
+            MuzzleParticles.bindSmokeDelivery(emitter, effect, true)
+            MuzzleParticles.configure(emitter, resource, effect)
             locators[emitter] = locator
             newEmitters += emitter
         }
 
+        for (effect in pending) spawn(effect, MuzzleParticles.ANCHOR)
+        for (data in events) {
+            if (data.effect() == MuzzleParticles.smoke) {
+                if (resource.muzzleFx?.trigger == "shot") continue
+                val anchor = if (MuzzleParticles.ANCHOR in boneTransforms) MuzzleParticles.ANCHOR else resolveMuzzleLocator(data, boneTransforms)
+                MuzzleParticles.layers(resource, true, includeSparks = false, distance = 0.0) { spawn(it, anchor) }
+            } else {
+                spawn(data.effect(), resolveMuzzleLocator(data, boneTransforms))
+            }
+        }
+
         if (locators.isEmpty()) return
 
-        val basePoseInv = Matrix4f(basePose).invert()
-        val cameraRotationInv = cameraRotationInverse()
-        val gunViewPose = poseStack.last().pose()
+        val gunPose = poseStack.last().pose()
+        val localGunPose = Matrix4f(basePose).invert().mul(gunPose)
+        val worldAlignedGunPose = cameraRotationInverse().mul(BedrockBoneCoordinateTool.modelToView(gunPose))
 
         for ((emitter, locator) in locators) {
             val boneTransform = boneTransforms[locator] ?: continue
-            val muzzleView = Matrix4f(gunViewPose).mul(boneTransform)
             emitter.setEmitterTransform(
-                Matrix4f(basePoseInv).mul(muzzleView),
-                Matrix4f(cameraRotationInv).mul(muzzleView)
+                Matrix4f(localGunPose).mul(boneTransform),
+                Matrix4f(worldAlignedGunPose).mul(boneTransform)
             )
         }
 
@@ -2148,7 +2272,7 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             ClientRenderHandler.muzzleDirection = null
             return
         }
-        val muzzleTransform = Matrix4f(poseMatrix).mul(flareTransform)
+        val muzzleTransform = BedrockBoneCoordinateTool.modelToView(poseMatrix).mul(flareTransform)
         val axis = muzzleTransform.transformDirection(0f, 0f, -1f, Vector3f())
         val axisScale = axis.length()
         if (axisScale < 1e-6f) {
@@ -2161,8 +2285,6 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
             ClientRenderHandler.muzzleDirection =
                 Vec3(worldAxis.x.toDouble(), worldAxis.y.toDouble(), worldAxis.z.toDouble())
         }
-
-        if (!MuzzleFlashRenderer.isFiring()) return
 
         // 枪口在相机空间里的位置
         val muzzle = muzzleTransform.getTranslation(Vector3f())
@@ -2177,6 +2299,14 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         val offset = cameraRotationInverse().transformPosition(
             Vector3f(adjusted.x.toFloat(), adjusted.y.toFloat(), adjusted.z.toFloat())
         )
+        localPlayer?.takeIf { localFirstPersonHand == InteractionHand.MAIN_HAND }?.let { holder ->
+            val worldPos = Minecraft.getInstance().gameRenderer.mainCamera.position.add(
+                Vec3(offset.x.toDouble(), offset.y.toDouble(), offset.z.toDouble())
+            )
+            val worldDir = ClientRenderHandler.muzzleDirection ?: holder.lookAngle
+            GunMuzzleLightHandler.sample(holder, ActiveGun.stackOf(holder), worldPos, worldDir)
+        }
+        if (!MuzzleFlashRenderer.isFiring()) return
         ClientRenderHandler.bulletRenderOffset =
             Vec3(offset.x.toDouble(), offset.y.toDouble(), offset.z.toDouble())
     }
@@ -2455,34 +2585,30 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
      *
      * 用的是**槽位登记的固定骨骼**（[AttachmentSlot.focusBone]，即 `scope_pos` / `grip_pos`
      * 这类约定名），而不是"配件自己的 Bone"——按钮位置必须稳定，不能因为装了什么配件就跳走。
-     * 骨骼不在模型里、或投影落到相机背面时该槽位不出现在结果里，界面据此隐藏按钮。
+     * 仅骨骼不存在时不提供点位；屏幕外与相机背面的点保留方向，界面将按钮放到安全区域边缘。
      *
      * 投影矩阵取采样这一刻生效的那一份，与 [submitScopeReticleSample] 同一套口径。
      */
     private fun captureMountScreenPositions(stack: ItemStack, poseStack: PoseStack, model: GeoGunModel) {
         val positions = mutableMapOf<AttachmentType, BoneScreenPoint>()
+        val window = Minecraft.getInstance().window
         for (slot in AttachmentSlots.ALL) {
             val bone = slot.focusBone ?: continue
-            val point = BedrockBoneCoordinateTool.firstPersonBonePointToScreen(
-                poseStack, model, bone, EDIT_MOUNT_POINT
-            ) ?: continue
+            val transform = model.getGlobalTransform(bone) ?: continue
+            val point = editMountScreenPoint(poseStack, transform, window.guiScaledWidth, window.guiScaledHeight) ?: continue
             positions[slot.type] = point
         }
 
         // 弹种不是一个槽位，骨骼得按模型挑：有 `ammo_pos` 就用它，否则退回弹匣的定位骨骼
-        val ammo = BedrockBoneCoordinateTool.firstPersonBonePointToScreen(
-            poseStack, model, ammoFocusBone(model), EDIT_MOUNT_POINT
-        )
+        val ammo = model.getGlobalTransform(ammoFocusBone(model))?.let {
+            editMountScreenPoint(poseStack, it, window.guiScaledWidth, window.guiScaledHeight)
+        }
 
-        val window = Minecraft.getInstance().window
         // 副武器自己的弹种定位点：拆装界面里副武器是独立一份模型，要进它自己的模型取 `ammo_pos`
         val subAmmo = subWeaponAmmoBonePoint(stack, poseStack, model, window.guiScaledWidth, window.guiScaledHeight)
 
         val stackMount = scopeStackMountTransform(stack, model)?.let {
-            BedrockBoneCoordinateTool.firstPersonBonePointToScreen(
-                poseStack, it, EDIT_MOUNT_POINT,
-                RenderSystem.getProjectionMatrix(), window.guiScaledWidth, window.guiScaledHeight
-            )
+            editMountScreenPoint(poseStack, it, window.guiScaledWidth, window.guiScaledHeight)
         }
         WeaponEditMountTracker.update(
             positions, ammo, stackMount, subAmmo, window.guiScaledWidth, window.guiScaledHeight
@@ -2511,7 +2637,7 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         return Matrix4f(mount).mul(ammoBone)
     }
 
-    /** 把上面那个变换投影成屏幕坐标；点位落到相机背面时为 `null` */
+    /** 把上面那个变换投影成屏幕坐标，保留屏幕外方向。 */
     private fun subWeaponAmmoBonePoint(
         stack: ItemStack,
         poseStack: PoseStack,
@@ -2520,10 +2646,24 @@ open class GeoGunRenderer : AbstractGeoItemRendererV2() {
         screenHeight: Int,
     ): BoneScreenPoint? {
         val ammo = subWeaponAmmoTransform(stack, model) ?: return null
-        return BedrockBoneCoordinateTool.firstPersonBonePointToScreen(
-            poseStack, ammo, EDIT_MOUNT_POINT,
-            RenderSystem.getProjectionMatrix(), screenWidth, screenHeight
-        )
+        return editMountScreenPoint(poseStack, ammo, screenWidth, screenHeight)
+    }
+
+    /** 仅用于改装按钮；不改变激光、分划等场景中对相机背面点的剔除规则。 */
+    private fun editMountScreenPoint(
+        poseStack: PoseStack, transform: Matrix4f, screenWidth: Int, screenHeight: Int,
+    ): BoneScreenPoint? {
+        val view = BedrockBoneCoordinateTool.firstPersonBonePointToView(poseStack, transform, EDIT_MOUNT_POINT)
+        val projection = RenderSystem.getProjectionMatrix()
+        val point = BedrockBoneCoordinateTool.viewPointToScreen(view, projection, screenWidth, screenHeight)
+        if (point != null && point.x.isFinite() && point.y.isFinite()) return point
+        // 不能对背面点除以负 w，否则左右方向会翻转。用投影方向生成屏幕外的代理点。
+        val clip = projection.transform(Vector4f(view.x.toFloat(), view.y.toFloat(), view.z.toFloat(), 1f))
+        if (!clip.x.isFinite() || !clip.y.isFinite() || !clip.w.isFinite()) return null
+        val direction = max(kotlin.math.abs(clip.x), kotlin.math.abs(clip.y))
+        val dx = if (direction > 0.000001f) clip.x / direction else 0f
+        val dy = if (direction > 0.000001f) clip.y / direction else -1f
+        return BoneScreenPoint((0.5f + dx) * screenWidth, (0.5f - dy) * screenHeight, 0f, false)
     }
 
     private fun scopeStackMountTransform(stack: ItemStack, model: GeoGunModel): Matrix4f? {

@@ -227,6 +227,7 @@ class ModItemTagProvider(
         this.tag(ModTags.Items.ANIMATED_RIFLE).add(
             ModItems.AK_47.get(),
             ModItems.AK_12.get(),
+            ModItems.A_762.get(),
             ModItems.SKS.get(),
             ModItems.M_4.get(),
             ModItems.HK_416.get(),
@@ -284,6 +285,7 @@ class ModItemTagProvider(
             ModItems.MARLIN.get(),
             ModItems.AK_47.get(),
             ModItems.AK_12.get(),
+            ModItems.A_762.get(),
             ModItems.QBZ_95.get(),
             ModItems.QBZ_191.get()
         )
@@ -373,6 +375,7 @@ class ModItemTagProvider(
             ModItems.ANNIHILATOR_BLUEPRINT.get(),
             ModItems.HPJ_11_BLUEPRINT.get(),
             ModItems.BL_132_BLUEPRINT.get(),
+            ModItems.A_762_BLUEPRINT.get(),
         )
 
         this.tag(ModTags.Items.SUPERB_BLUEPRINT).add(
@@ -419,7 +422,8 @@ class ModItemTagProvider(
             ModItems.STEEL_HAMMER.get(),
             ModItems.DIAMOND_HAMMER.get(),
             ModItems.CEMENTED_CARBIDE_HAMMER.get(),
-            ModItems.NETHERITE_HAMMER.get()
+            ModItems.NETHERITE_HAMMER.get(),
+            ModItems.FIRE_AXE.get()
         )
 
         this.tag(ItemTags.SWORDS).add(*swords)
@@ -497,6 +501,7 @@ class ModItemTagProvider(
             perkItem(ModPerks.FROSTMOURNE),
             perkItem(ModPerks.BLADE_BULLET),
             perkItem(ModPerks.CUPID_ARROW),
+            perkItem(ModPerks.ARRSOW_DISCORD),
             perkItem(ModPerks.HE_BULLET),
             perkItem(ModPerks.MICRO_MISSILE),
             perkItem(ModPerks.AP_BULLET),
@@ -505,6 +510,8 @@ class ModItemTagProvider(
             perkItem(ModPerks.ACID_BULLET)
         )
         this.tag(ModTags.Items.RESEARCHABLE_AMMO_PERK_EPIC).add(
+            perkItem(ModPerks.HOMING_BULLET),
+            perkItem(ModPerks.CHAIN_LIGHTNING),
             perkItem(ModPerks.PHASE_PENETRATING_BULLET),
             perkItem(ModPerks.PHOSPHORUS_FLAME_BULLET),
             perkItem(ModPerks.CLUSTER_BOMB)
@@ -536,6 +543,7 @@ class ModItemTagProvider(
             perkItem(ModPerks.STRIVING_FOR_PERFECTION)
         )
         this.tag(ModTags.Items.RESEARCHABLE_FUNCTIONAL_PERK_LEGENDARY).add(
+            perkItem(ModPerks.PRACTICE_MAKES_PERFECT),
             perkItem(ModPerks.INTELLIGENT_CHIP)
         )
 
@@ -550,6 +558,7 @@ class ModItemTagProvider(
             perkItem(ModPerks.VOLT_OVERLOAD)
         )
         this.tag(ModTags.Items.RESEARCHABLE_DAMAGE_PERK_RARE).add(
+            perkItem(ModPerks.CRUSHING_FORCE),
             perkItem(ModPerks.KILLING_TALLY),
             perkItem(ModPerks.KILL_CLIP),
             perkItem(ModPerks.MONSTER_HUNTER),
@@ -686,6 +695,7 @@ class ModItemTagProvider(
             ModItems.CHARM_PIGLIN_HEAD,
             ModItems.CHARM_CONTAINER,
             ModItems.CHARM_M67_GRENADE,
+            ModItems.CHARM_CAKE,
             ModItems.CHARM_SPIDER_HEAD,
             ModItems.CHARM_FUKAMIZU_FISH,
             ModItems.CHARM_WITHER_SKELETON_SKULL,
@@ -697,6 +707,7 @@ class ModItemTagProvider(
             ModItems.CHARM_SUI_CONTAINER,
             ModItems.CHARM_STARS_IL,
             ModItems.CHARM_MK_82,
+            ModItems.CHARM_GOLDEN_APPLE,
             ModItems.CHARM_ORANGE_PLUSHIE,
             ModItems.CHARM_HAKUREI_REIMU,
             ModItems.CHARM_KIRISAME_MARISA,
@@ -711,6 +722,8 @@ class ModItemTagProvider(
             ModItems.CHARM_THE_EMPERORS_NEW_CHARM,
             ModItems.CHARM_BEAST,
             ModItems.CHARM_CRYSTAL_POPCORN,
+            ModItems.CHARM_GOLDEN_RINGO_GUN_KING_MEDAL,
+            ModItems.CHARM_BEACON,
             ModItems.CHARM_SENPAI,
             ModItems.CHARM_MRAHC,
             ModItems.CHARM_EXPERIENCE_BOTTLE,
@@ -718,28 +731,36 @@ class ModItemTagProvider(
             ModItems.CHARM_CHIRAM_CORE,
             ModItems.CHARM_LILY,
             ModItems.CHARM_HIRU_HEAD,
-            ModItems.CHARM_SWISS_COIL
+            ModItems.CHARM_SWISS_COIL,
+            ModItems.CHARM_INSIGNIA_OF_THE_HEART_SEEKER,
+            ModItems.CHARM_COOING_BELL,
+            ModItems.CHARM_TEMPERED_FEATHER,
+            ModItems.CHARM_RADIANT_VOW
         ),
         AttachmentType.LOWER_RAIL to listOf(
             ModItems.LOWER_RAIL_BIPOD,
             ModItems.PEQ_15,
             ModItems.PISTOL_LASER,
-            ModItems.HANDGUN_SHIELD
+            ModItems.HANDGUN_SHIELD,
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT
         ),
         AttachmentType.UPPER_RAIL to listOf(
             ModItems.PEQ_15,
             ModItems.PISTOL_LASER,
             ModItems.STANDARD_GUN_SHIELD,
-            ModItems.HYPERION_SHIELD_MODULE
+            ModItems.HYPERION_SHIELD_MODULE,
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT
         ),
         AttachmentType.LEFT_RAIL to listOf(
             ModItems.PEQ_15,
             ModItems.PISTOL_LASER,
-            ModItems.RANGE_FINDER
+            ModItems.RANGE_FINDER,
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT
         ),
         AttachmentType.RIGHT_RAIL to listOf(
             ModItems.PEQ_15,
-            ModItems.PISTOL_LASER
+            ModItems.PISTOL_LASER,
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT
         ),
     )
 
@@ -774,6 +795,112 @@ class ModItemTagProvider(
                     .toTypedArray()
             )
         }
+
+        // 皮卡汀尼标准瞄准镜：标准导轨枪械通用的那一组镜，顺序与枪械 Scope 列表保持一致。
+        // 枪械的 AvailableAttachments.Scope 里写 "#superbwarfare:attachment/scope/picatinny" 即可整组引用。
+        this.tag(ModTags.Items.ATTACHMENT_SCOPE_PICATINNY).add(
+            ModItems.SCOPE_RAISER.get(),
+            ModItems.SCOPE_COYOTE.get(),
+            ModItems.SCOPE_AIMPOINT_T2.get(),
+            ModItems.SCOPE_EOTECH_551.get(),
+            ModItems.SCOPE_DRS_TH.get(),
+            ModItems.SCOPE_OKP_7.get(),
+            ModItems.SCOPE_PKAS.get(),
+            ModItems.SCOPE_BRUISER.get(),
+            ModItems.SCOPE_RANGER.get(),
+            ModItems.SCOPE_1P_78.get(),
+            ModItems.SCOPE_PK_A.get(),
+            ModItems.SCOPE_ACOG.get(),
+            ModItems.SCOPE_QMK171.get(),
+            ModItems.SCOPE_HAMR.get(),
+            ModItems.SCOPE_ELCAN_4X.get(),
+            ModItems.SCOPE_LPVO.get(),
+            ModItems.SCOPE_SNIPER.get(),
+            ModItems.SCOPE_HANYANG_88_RE_STANDARD.get(),
+            ModItems.SCOPE_WINEFOX.get(),
+            ModItems.SCOPE_SPYGLASS.get(),
+            ModItems.STEEL_PIPE_SCOPE.get(),
+        )
+
+        // 其余槽位的通用配件 tag，条目顺序取现有枪械列表的多数派顺序
+        this.tag(ModTags.Items.ATTACHMENT_GRIP_STANDARD).add(
+            ModItems.VERTICAL_GRIP.get(),
+            ModItems.GRIP_VERTICAL_PINEAPPLE.get(),
+            ModItems.GRIP_VERTICAL_BIPOD.get(),
+            ModItems.GRIP_RECTANGLE_VERTICAL.get(),
+            ModItems.TRIANGLE_GRIP.get(),
+            ModItems.GRIP_CQR_GEN2.get(),
+            ModItems.STEEL_PIPE_GRIP.get(),
+        )
+
+        this.tag(ModTags.Items.ATTACHMENT_LOWER_RAIL_STANDARD).add(
+            ModItems.LOWER_RAIL_BIPOD.get(),
+            ModItems.PEQ_15.get(),
+            ModItems.PISTOL_LASER.get(),
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT.get(),
+        )
+
+        this.tag(ModTags.Items.ATTACHMENT_UPPER_RAIL_STANDARD).add(
+            ModItems.PEQ_15.get(),
+            ModItems.STANDARD_GUN_SHIELD.get(),
+            ModItems.PISTOL_LASER.get(),
+            ModItems.HYPERION_SHIELD_MODULE.get(),
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT.get(),
+        )
+
+        this.tag(ModTags.Items.ATTACHMENT_LEFT_RAIL_STANDARD).add(
+            ModItems.PEQ_15.get(),
+            ModItems.RANGE_FINDER.get(),
+            ModItems.PISTOL_LASER.get(),
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT.get(),
+        )
+
+        this.tag(ModTags.Items.ATTACHMENT_RIGHT_RAIL_STANDARD).add(
+            ModItems.PEQ_15.get(),
+            ModItems.PISTOL_LASER.get(),
+            ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT.get(),
+        )
+
+        // stock_zenit_pt_1 是 AK 系专属，不进通用 tag
+        this.tag(ModTags.Items.ATTACHMENT_STOCK_STANDARD).add(
+            ModItems.STOCK_AR_TACTICAL.get(),
+            ModItems.STOCK_ELITE.get(),
+            ModItems.STOCK_STR.get(),
+            ModItems.STOCK_UBR.get(),
+            ModItems.STOCK_PRS.get(),
+            ModItems.STEEL_PIPE_STOCK.get(),
+        )
+
+        this.tag(ModTags.Items.ATTACHMENT_SUBWEAPON_STANDARD).add(
+            ModItems.SUB_WEAPON_GP_25.get(),
+        )
+
+        this.tag(ModTags.Items.ATTACHMENT_MUZZLE_STANDARD).add(
+            ModItems.MEOWLENCER.get(),
+            ModItems.HISSILENCER.get(),
+            ModItems.SILAOWUNCER.get(),
+            ModItems.LOUDSPEAKER.get(),
+            ModItems.MILENCER.get(),
+            ModItems.STEEL_PIPE_SILENCER.get(),
+        )
+
+        this.tag(ModTags.Items.ATTACHMENT_MUZZLE_RIFLE).add(
+            ModItems.RU_SILENCER.get(),
+            ModItems.MUZZLE_BRAKE_RU.get(),
+            ModItems.MUZZLE_BRAKE_AR.get(),
+            ModItems.MUZZLE_BREAK_BIRDCAGE.get(),
+            ModItems.MUZZLE_ZENIT_DTK_1.get(),
+            ModItems.MUZZLE_COMPENSATOR_R_17.get(),
+            ModItems.AR_SILENCER.get(),
+        )
+
+        this.tag(ModTags.Items.FOOD_RAIN_FOODS).add(
+            Items.BREAD, Items.COOKED_BEEF, Items.COOKED_CHICKEN, Items.BAKED_POTATO,
+            Items.APPLE, Items.CARROT, Items.COOKIE, Items.PUMPKIN_PIE, Items.MELON_SLICE,
+            Items.CAKE, Items.MUSHROOM_STEW, Items.GOLDEN_CARROT, Items.GOLDEN_APPLE,
+            Items.COOKED_PORKCHOP, Items.COOKED_MUTTON, Items.COOKED_RABBIT,
+            Items.COOKED_COD, Items.COOKED_SALMON
+        )
     }
 
     /** 按物品自身的稀有度把它落进 [slot] 的对应子 tag */

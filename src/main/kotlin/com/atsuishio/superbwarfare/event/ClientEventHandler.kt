@@ -10,18 +10,19 @@ import com.atsuishio.superbwarfare.client.animation.AnimationCurves
 import com.atsuishio.superbwarfare.client.animation.gun.GeoGunAnimationInstance
 import com.atsuishio.superbwarfare.client.animation.gun.GunDrawAnimation
 import com.atsuishio.superbwarfare.client.animation.gun.GunSprintAnimation
+import com.atsuishio.superbwarfare.client.camera.VehicleBoneCamera
 import com.atsuishio.superbwarfare.client.gun.*
-import com.atsuishio.superbwarfare.client.lighting.LightPositionRegistry
-import com.atsuishio.superbwarfare.client.lighting.MuzzleFlashHelper
-import com.atsuishio.superbwarfare.client.lighting.VehicleLightingHandler
+import com.atsuishio.superbwarfare.client.lighting.*
 import com.atsuishio.superbwarfare.client.overlay.CrossHairOverlay
+import com.atsuishio.superbwarfare.client.overlay.FlashbangOverlay
 import com.atsuishio.superbwarfare.client.overlay.OverlayTraceHandler
 import com.atsuishio.superbwarfare.client.overlay.VehicleMainWeaponHudOverlay
 import com.atsuishio.superbwarfare.client.renderer.gun.GeoGunRenderer
+import com.atsuishio.superbwarfare.client.renderer.gun.MuzzleFlashRenderer
 import com.atsuishio.superbwarfare.client.renderer.projectile.ReforgingGravityBallRenderer
 import com.atsuishio.superbwarfare.client.renderer.scope.ScopeLensPostProcessor
+import com.atsuishio.superbwarfare.client.renderer.special.NuclearExplosionRenderer
 import com.atsuishio.superbwarfare.client.shader.RadiationShaderHandler
-import com.atsuishio.superbwarfare.client.shader.ThermalShaderHandler
 import com.atsuishio.superbwarfare.config.client.DisplayConfig
 import com.atsuishio.superbwarfare.config.server.MiscConfig
 import com.atsuishio.superbwarfare.data.attachment.AttachmentDefinition
@@ -408,6 +409,15 @@ object ClientEventHandler {
     @JvmField
     var chargeActive: Boolean = false
 
+    /**
+     * 这一次扣扳机是否还欠一发：按下扳机置位，真的打出一发后清零。
+     *
+     * 蓄力枪必须"一次扣扳机 = 一次蓄力 = 一发"，不能靠 `holdingFireKeyTicks` 的残留值
+     * 直接判定（残留的满蓄力会让后续快速点击一按就出膛，跳过击锤行程）。
+     */
+    @JvmField
+    var chargeArmed: Boolean = false
+
     @JvmField
     var chargeProgress: Double = 0.0
 
@@ -440,6 +450,95 @@ object ClientEventHandler {
 
     @JvmField
     var burstFireAmount: Int = 0
+
+    /** Only the first shot of a trigger request is cancellable by releasing during sprint recovery.
+     * An RPM-buffered semi click survives release until its deadline; started bursts finish normally.
+     */
+    internal class PendingFireInput {
+        companion object {
+            // 半自动预输入：射击间隔的 25%，最长 100ms；将上限改为 0 即取消预输入。
+            private const val SEMI_BUFFER_CYCLE_FRACTION = 0.25
+            private const val SEMI_BUFFER_MAX_MS = 100L
+        }
+
+        private var waitingForFirstShot = false
+        private var blockedBySprint = false
+        private var expiresAtMs: Long? = null
+
+        fun queue(sprintBlocked: Boolean) {
+            waitingForFirstShot = true
+            blockedBySprint = sprintBlocked
+            expiresAtMs = null
+        }
+
+        fun queueBuffered(
+            sprintBlocked: Boolean, rpm: Int, cycleProgressMs: Long, nowMs: Long
+        ): Boolean {
+            val cycleMs = (60000.0 / rpm.coerceAtLeast(1)).roundToLong()
+            val windowMs = (cycleMs * SEMI_BUFFER_CYCLE_FRACTION).roundToLong().coerceIn(0L, SEMI_BUFFER_MAX_MS)
+            if (windowMs == 0L || cycleMs - cycleProgressMs > windowMs) return false
+            queue(sprintBlocked)
+            expiresAtMs = nowMs + windowMs
+            return true
+        }
+
+        fun discardExpired(nowMs: Long): Boolean {
+            val deadline = expiresAtMs ?: return false
+            if (!waitingForFirstShot || nowMs < deadline) return false
+            reset()
+            return true
+        }
+
+        fun discardReleased(held: Boolean, sprintBlocked: Boolean): Boolean {
+            if (!waitingForFirstShot) return false
+            blockedBySprint = blockedBySprint || sprintBlocked
+            if (held || !blockedBySprint) return false
+            reset()
+            return true
+        }
+
+        fun reset() {
+            waitingForFirstShot = false
+            blockedBySprint = false
+            expiresAtMs = null
+        }
+    }
+
+    private val pendingFireInput = PendingFireInput()
+
+    private fun sprintBlocksFire(player: Player): Boolean = player.isSprinting || fireCooldown > 0.0 ||
+            sprintRotWeight >= GunSprintAnimation.FIRE_READY_WEIGHT
+
+    fun queueFireInput(player: Player, amount: Int) {
+        burstFireAmount = amount
+        // Read before the input handler stops sprinting; readiness may change before mouse release.
+        pendingFireInput.queue(sprintBlocksFire(player))
+    }
+
+    fun queueBufferedSemiFireInput(player: Player, data: GunData): Boolean {
+        if (!pendingFireInput.queueBuffered(
+                sprintBlocksFire(player), effectiveRpm(data), clientTimer.progress, System.nanoTime() / 1_000_000L
+            )) return false
+        burstFireAmount = 1
+        return true
+    }
+
+    fun expireBufferedFireInput() {
+        if (burstFireAmount == 0) {
+            pendingFireInput.reset()
+            return
+        }
+        if (pendingFireInput.discardExpired(System.nanoTime() / 1_000_000L)) {
+            burstFireAmount = 0
+            // SEMI also accepts holdingFireKey: clear both paths so an expired click cannot fire
+            // merely because the mouse is still down. A new press is required after expiration.
+            holdingFireKey = false
+        }
+    }
+
+    fun releaseQueuedFireInput(player: Player) {
+        if (pendingFireInput.discardReleased(false, sprintBlocksFire(player))) burstFireAmount = 0
+    }
 
     @JvmField
     var customRpm: Int = 0
@@ -501,16 +600,7 @@ object ClientEventHandler {
     @JvmField
     var lerpShake: Double = 0.0
 
-    // 右键重击（`RightClickAction: "HeavyStrike"`）按下后置位，被 `handleGunMelee` 消费一次
-    @JvmField
-    var heavyStrikeRequested: Boolean = false
-
-    // 重击请求的缓冲：上一段还在计时时按下的右键留到连招窗口再兑现，不用重按
-    private var heavyStrikeBuffer: Int = 0
-
-    private const val HEAVY_STRIKE_BUFFER_TICKS = 30
-
-    // 智慧芯片锁定的实体
+    // 自瞄锁定的实体
     @JvmField
     var lockedEntity: Entity? = null
 
@@ -691,6 +781,9 @@ object ClientEventHandler {
     @JvmField
     var activeThermalImaging: Boolean = false
 
+    @JvmField
+    var scopeThermalEnabled: Boolean = true
+
     // 原VectorUtil的属性
     @JvmField
     var fov: Double = 70.0
@@ -712,6 +805,9 @@ object ClientEventHandler {
 
     @JvmField
     var bombHitPos: Vec3 = Vec3.ZERO
+
+    private var bombHitVehicle: VehicleEntity? = null
+    private var bombHitWeapon: GunData? = null
 
     @JvmField
     var missileLockingPos: BlockPos? = null
@@ -772,22 +868,32 @@ object ClientEventHandler {
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
-    fun renderGravityLensing(event: RenderLevelStageEvent) {
+    fun renderWorldPostEffects(event: RenderLevelStageEvent) {
+        if (event.stage === RenderLevelStageEvent.Stage.AFTER_LEVEL) GunMuzzleLightRenderer.render()
         ReforgingGravityBallRenderer.renderLensing(event)
     }
 
     @SubscribeEvent
     fun clearGravityLensing(event: ClientPlayerNetworkEvent.LoggingOut) {
+        FlashbangOverlay.clear()
+        MuzzleFlashRenderer.clear()
         resetMeleeOnDeath()
         meleePlayer = null
         meleeLevel = null
+        // 退出世界后热融合开关回到默认开启，避免把上一个存档里关掉的状态带过来
+        scopeThermalEnabled = true
         ReforgingGravityBallRenderer.clearWorldEffects()
+        NuclearExplosionRenderer.clear()
         ScopeLensPostProcessor.close()
+        GunMuzzleLightRenderer.close()
+        FlashlightHandler.clear()
+        WorldLightHandler.clear()
         com.atsuishio.superbwarfare.client.renderer.scope.ScopeThermalRenderer.close()
     }
 
     @SubscribeEvent
     fun resetMeleeOnRespawn(event: ClientPlayerNetworkEvent.Clone) {
+        FlashbangOverlay.clear()
         // 立即复活可能完全跳过客户端的死亡 tick，不能只靠 isDeadOrDying 清理。
         resetMeleeOnDeath()
         meleePlayer = event.newPlayer
@@ -796,8 +902,11 @@ object ClientEventHandler {
 
     @SubscribeEvent
     fun handleClientTick(event: ClientTickEvent.Post) {
+        FlashbangOverlay.tick()
+        NuclearExplosionRenderer.tick()
         val player = localPlayer ?: run {
             syncMeleePlayer(null)
+            calculateBombHitPos(null)
             RadiationShaderHandler.setDosage(0f)
             return
         }
@@ -846,8 +955,6 @@ object ClientEventHandler {
         handleControlVehicle(player, stack)
         handleArtilleryIndicator(player, stack)
         calculateBombHitPos(player)
-
-        LightPositionRegistry.tick()
     }
 
     @JvmStatic
@@ -873,23 +980,6 @@ object ClientEventHandler {
 
         if (!activeThermalImaging || !hasThermalImagingGoggles) {
             activeThermalImaging = false
-            turnOffThermalImaging()
-        } else if (Minecraft.getInstance().gameRenderer.currentEffect() == null) {
-            turnOnThermalImaging()
-        }
-    }
-
-    @JvmStatic
-    fun turnOnThermalImaging() {
-        ThermalShaderHandler.setActive(true)
-        mc.gameRenderer.loadEffect(Mod.loc("shaders/post/night_vision.json"))
-    }
-
-    @JvmStatic
-    fun turnOffThermalImaging() {
-        if (ThermalShaderHandler.isActive()) {
-            mc.gameRenderer.shutdownEffect()
-            ThermalShaderHandler.setActive(false)
         }
     }
 
@@ -1008,16 +1098,25 @@ object ClientEventHandler {
         }
     }
 
-    fun calculateBombHitPos(player: Player) {
-        val vehicle = player.vehicle as? VehicleEntity ?: return
-        val gunData = vehicle.getGunData(player)
+    fun calculateBombHitPos(player: Player?) {
+        val vehicle = player?.vehicle as? VehicleEntity
+        val weapon = vehicle?.getGunData(player)?.takeIf { it.get(GunProp.CROSSHAIR) == "@AirBomb" }
+        val nextPos = if (vehicle != null && weapon != null) vehicle.bombHitPos(player) else Vec3.ZERO
 
-        bombHitPosO = bombHitPos
-        bombHitPos = if (gunData != null && gunData.get(GunProp.CROSSHAIR) == "@AirBomb") {
-            vehicle.bombHitPos(player)
-        } else {
-            Vec3.ZERO
-        }
+        bombHitPosO = if (vehicle === bombHitVehicle && weapon === bombHitWeapon) bombHitPos else nextPos
+        bombHitPos = nextPos
+        bombHitVehicle = if (weapon != null) vehicle else null
+        bombHitWeapon = weapon
+    }
+
+    fun interpolatedBombHitPos(partialTick: Float): Vec3 =
+        bombHitPosO.lerp(bombHitPos, partialTick.toDouble())
+
+    fun cachedBombHitPos(vehicle: VehicleEntity, player: Player, partialTick: Float): Vec3? {
+        if (player !== localPlayer || player.vehicle !== vehicle || vehicle !== bombHitVehicle) return null
+        val weapon = bombHitWeapon ?: return null
+        if (vehicle.getGunData(player) !== weapon) return null
+        return interpolatedBombHitPos(partialTick)
     }
 
     fun handleControlVehicle(player: Player, stack: ItemStack) {
@@ -1711,8 +1810,6 @@ object ClientEventHandler {
         GunActionLock.clearAll()
         MeleeClientHandler.clear()
         GunChargeHandler.clear()
-        heavyStrikeRequested = false
-        heavyStrikeBuffer = 0
         wasChargeKeyDown = false
         holdingFireKey = false
         fireCooldown = 0.0
@@ -1731,34 +1828,35 @@ object ClientEventHandler {
         // 动作锁计时：只要有活跃的动作状态就推进（帧率无关，每客户端 tick 一次）
         val gunData = if (GunItem.isHeldWeapon(stack)) GunData.from(stack) else null
         GunActionLock.updateHeld(gunData)
-        val actionState = gunData?.let { GunActionLock.of(it) }
-        actionState?.tick()
-
-        if (gunData != null) {
-            val operated = ActiveGun.dataOf(gunData, player.level().isClientSide)
-            if (operated !== gunData) {
-                GunActionLock.of(operated).tick()
-            }
-        }
 
         if (gunData == null) {
             // 手里换成别的东西也要把窗口收掉（状态得立刻同步回去）
             GunChargeHandler.cancelIfItemChanged(stack)
-            heavyStrikeBuffer = 0
             clearYsmCompatState()
             return
         }
 
+        val actionState = GunActionLock.of(gunData)
+        actionState.tick()
+        val operated = ActiveGun.dataOf(gunData, player.level().isClientSide)
+        if (operated !== gunData) GunActionLock.of(operated).tick()
+
         // 切换请求的兜底超时（丢一次包不该把 G 永久锁死，也不能让动作锁一直挂着）
         SubWeaponClientHandler.tick(gunData)
 
-        // 右键行为：重击指定段，冲锋撞到东西时打第 0 段（撞上的那个目标会被强行算进命中）
-        if (heavyStrikeRequested) {
-            heavyStrikeRequested = false
-            // 至少要活到这一段走完、连招窗口打开
-            heavyStrikeBuffer = maxOf(HEAVY_STRIKE_BUFFER_TICKS, GunActionLock.of(gunData).meleeTicks)
+        val canOperate = !holdFireVehicle
+                && !notInGame
+                && !isEditing
+                && !(player.vehicle is VehicleEntity && (player.vehicle as VehicleEntity).banHand(player))
+
+        if (actionState.heavyStrikeBufferTicks > 0 &&
+            (!canOperate || operated.get(GunProp.RIGHT_CLICK_ACTION) != RightClickAction.HEAVY_STRIKE)
+        ) {
+            actionState.heavyStrikeBufferTicks = 0
         }
-        val heavyStrike = heavyStrikeBuffer > 0
+
+        // 右键行为：重击指定段，冲锋撞到东西时打第 0 段（撞上的那个目标会被强行算进命中）
+        val heavyStrike = actionState.heavyStrikeBufferTicks > 0
         val chargeTarget = if (heavyStrike) null else GunChargeHandler.tick(player, stack)
         val bayonetCharge = chargeTarget != null
         val heavyIndex = if (heavyStrike) MeleeClientHandler.indexOfHeavy(gunData) else -1
@@ -1767,11 +1865,6 @@ object ClientEventHandler {
             bayonetCharge -> GunChargeHandler.STRIKE_ACTION_INDEX
             else -> -1
         }
-
-        val canOperate = !holdFireVehicle
-                && !notInGame
-                && !isEditing
-                && !(player.vehicle is VehicleEntity && (player.vehicle as VehicleEntity).banHand(player))
 
         // 疾跑中单击冲锋键起刺刀冲锋（只在地面上、不在载具里）
         val chargeKeyDown = ModKeyMappings.BAYONET_CHARGE.isDown()
@@ -1789,7 +1882,7 @@ object ClientEventHandler {
             stack = stack,
             // 冲锋窗口里 V 不再挥击：按住不放/再按一下都不能抢在冲锋那一击前面
             meleeKeyDown = ModKeyMappings.MELEE.isDown() && !GunChargeHandler.isCharging(),
-            subWeaponFireKeyDown = ModKeyMappings.SUBWEAPON_FIRE.isDown(),
+            subWeaponFireKeyDown = ModKeyMappings.SUBWEAPON_SWITCH.isDown(),
             holdingFireKey = holdingFireKey,
             drawTime = drawTime,
             canOperate = canOperate,
@@ -1806,10 +1899,9 @@ object ClientEventHandler {
             GunChargeHandler.reset()
         }
 
-        // 缓冲的重击：打出去了就收掉，没打出去就继续等（这一段计时还没走到窗口）
+        // 缓冲的重击只消费一次，截止 tick 仍允许尝试出招。
         if (heavyStrike) {
-            val heavyFired = swung && GunActionLock.of(gunData).meleeActionIndex == heavyIndex
-            heavyStrikeBuffer = if (heavyFired) 0 else (heavyStrikeBuffer - 1).coerceAtLeast(0)
+            actionState.heavyStrikeBufferTicks = if (swung) 0 else (actionState.heavyStrikeBufferTicks - 1).coerceAtLeast(0)
         }
 
         // 把新状态同步给 YSM 读取的兼容字段
@@ -1912,8 +2004,14 @@ object ClientEventHandler {
         return GunActionLock.of(stack).meleeFromBayonetCharge
     }
 
-    fun requestHeavyStrike() {
-        heavyStrikeRequested = true
+    fun requestHeavyStrike(player: Player) {
+        if (!player.isAlive || player.isRemoved || player.isSpectator || drawTime >= 0.01) return
+        val data = ActiveGun.mainGun(player) ?: return
+        syncMeleePlayer(player)
+        val state = GunActionLock.of(data)
+        if (state.heavyStrikeBufferTicks == 0) {
+            state.heavyStrikeBufferTicks = state.meleeInputBufferTicks(data.get(GunProp.MELEE_CHAIN_WINDOW))
+        }
     }
 
     @SubscribeEvent
@@ -2038,6 +2136,12 @@ object ClientEventHandler {
             burstFireAmount = 0
         }
 
+        expireBufferedFireInput()
+        // Do not retain a released click across sprint recovery, including one originally buffered
+        // during the RPM cycle that became blocked by sprinting before its first shot.
+        if (burstFireAmount == 0) pendingFireInput.reset()
+        else if (pendingFireInput.discardReleased(holdingFireKey, sprintBlocksFire(player))) burstFireAmount = 0
+
         // 开火部分
         val rpm = effectiveRpm(data)
         val rps = rpm / 60.0
@@ -2126,12 +2230,18 @@ object ClientEventHandler {
         chargeProgress = progress
         chargePower = chargeConfig.powerForProgress(progress)
 
+        // `chargeArmed` 保证"一次扣扳机只打一发、且每一发都要重新蓄力满"：
+        // 只按下扳机时置位，打完立刻清零，残留的满蓄力不会让下一次点击直接出膛。
         if (chargeConfig.trigger == ChargeTrigger.AUTO_AT_FULL
+            && chargeArmed
             && progress >= 1.0
             && clientTimer.progress == 0L
             && fireCooldown == 0.0
             && drawTime < 0.01
         ) {
+            chargeArmed = false
+            holdingFireKeyTicks = 0
+            holdingFireKeyTicks0 = 0f
             clientTimer.start()
             shootClient(player, chargePower)
             clientTimer.stop()
@@ -2152,6 +2262,7 @@ object ClientEventHandler {
         val data = GunData.from(stack)
         if (!item.canShoot(data, player) || item.useSpecialFireProcedure(data)) return
 
+        pendingFireInput.reset()
         val mode = data.selectedFireModeInfo().mode
         if (mode != FireMode.AUTO) {
             holdingFireKey = false
@@ -2208,12 +2319,15 @@ object ClientEventHandler {
         val stack = ActiveGun.stackOf(player)
         if (!GunItem.isOperable(stack)) return
         val data = GunData.from(stack)
+        val autoAimTarget = lockedEntity?.takeIf {
+            it.isAlive && data.get(GunProp.AUTO_AIM) && player.distanceTo(it) <= data.get(GunProp.AUTO_AIM_RANGE)
+        }
 
         sendPacketToServer(
             ShootMessage(
                 gunSpread,
                 zoom,
-                if (lockedEntity != null) lockedEntity!!.getUUID() else null,
+                autoAimTarget?.getUUID(),
                 null,
                 chargePower,
                 ClientRenderHandler.freshMuzzleDirection()
@@ -2228,12 +2342,6 @@ object ClientEventHandler {
             subWeaponFireRotTimer = 0.0
             subWeaponRecoilTimer = 0.0
             fireRecoilTime = 10.0
-        }
-
-        // Spawn dynamic block light muzzle flash for firearms using unified muzzle node
-        val flashParams = MuzzleFlashHelper.calculateFromStack(stack)
-        if (flashParams != null) {
-            MuzzleFlashHelper.spawnFlashCone(player.eyePosition, player.lookAngle, flashParams)
         }
 
         // 真实后坐（
@@ -2253,6 +2361,7 @@ object ClientEventHandler {
         recoilY = (2 * Math.random() - 1).toFloat() * gunRecoilY
         noSprintTicks = 10f
 
+        MuzzleFlashRenderer.recordShot(player, stack)
         postEvent(ClientGunFireEvent(player, stack))
     }
 
@@ -2385,10 +2494,18 @@ object ClientEventHandler {
     }
 
     fun clientShootVehicle(player: Player, vehicle: VehicleEntity, gunData: GunData) {
+        // 直接控制炮塔时，把当前渲染帧的炮管方向（与相机/准星同一插值源）一并发给服务端，
+        // 否则服务端用“当前刻”角生成子弹，会比玩家所见的炮管提前 0~1 tick（回摆时 15~20°）。
+        val shootDirection = if (vehicle.isDirectTurretController(player)) {
+            val partialTicks = mc.timer.getGameTimeDeltaPartialTick(true)
+            val direction = VehicleBoneCamera.renderedShootDirection(vehicle, player, partialTicks)
+            if (direction.lengthSqr() > 1.0E-8) direction.toVector3f() else null
+        } else null
         sendPacketToServer(
             VehicleFireMessage(
                 if (lockingEntityVehicle != null) lockingEntityVehicle!!.uuid else null,
-                if (lockingPosVehicle != null) lockingPosVehicle!!.toVector3f() else (if (gunData.get(GunProp.SEEK_WEAPON_INFO)?.inputBlockPos == true) missileLockingPos?.center?.toVector3f() else null)
+                if (lockingPosVehicle != null) lockingPosVehicle!!.toVector3f() else (if (gunData.get(GunProp.SEEK_WEAPON_INFO)?.inputBlockPos == true) missileLockingPos?.center?.toVector3f() else null),
+                shootDirection = shootDirection
             )
         )
         if (mc.options.cameraType == CameraType.FIRST_PERSON || zoomVehicle) {
@@ -3362,50 +3479,38 @@ object ClientEventHandler {
                 event.fov /= (1 + p * 0.01)
             currentFov = event.fov
 
-            // 智慧芯片
-            if (zoom && !notInGame && drawTime < 0.01 && !isEditing) {
-                if (player.isShiftKeyDown) {
-                    lockedEntity = null
-                } else {
-                    val intelligentChipLevel = data.perk.getLevel(ModPerks.INTELLIGENT_CHIP)
-                    val seekRange = 32.0 + 8.0 * (intelligentChipLevel - 1)
-
-                    if (intelligentChipLevel > 0) {
-                        if (lockedEntity == null || !lockedEntity!!.isAlive) {
-                            lockedEntity = if (data.perk.has(ModPerks.PHASE_PENETRATING_BULLET.get())
-                                || data.perk.has(ModPerks.BEAST_BULLET.get())
-                            ) {
-                                SeekTool.seekEntityThroughWall(player, seekRange, 16 / customZoom)
-                            } else {
-                                SeekTool.seekLivingEntity(player, seekRange, 16 / customZoom)
-                            }
-                        }
-                        if (lockedEntity != null && lockedEntity!!.isAlive) {
-                            val targetVec = lockedEntity!!.getEyePosition(event.partialTick.toFloat())
-                            val playerVec = player.getEyePosition(event.partialTick.toFloat())
-
-                            val hasGravity = data.perk.getLevel(ModPerks.MICRO_MISSILE) <= 0
-                            val velocity = data.get(GunProp.VELOCITY)
-
-                            val toVec = RangeTool.calculateFiringSolution(
-                                playerVec,
-                                targetVec,
-                                lockedEntity!!.deltaMovement.scale(0.5),
-                                velocity,
-                                if (hasGravity) data.get(GunProp.GRAVITY) else 0.0
-                            )
-
-                            look(player, toVec)
-
-                            if (player.distanceTo(lockedEntity!!) > seekRange) {
-                                lockedEntity = null
-                            }
-                        }
+            if (zoom && !notInGame && drawTime < 0.01 && !isEditing && !player.isShiftKeyDown &&
+                data.get(GunProp.AUTO_AIM)
+            ) {
+                val range = data.get(GunProp.AUTO_AIM_RANGE)
+                if (lockedEntity?.isAlive != true) {
+                    lockedEntity = if (data.get(GunProp.PROJECTILE_PENETRATING)) {
+                        SeekTool.seekEntityThroughWall(player, range, 16 / customZoom)
+                    } else {
+                        SeekTool.seekLivingEntity(player, range, 16 / customZoom)
+                    }
+                }
+                val target = lockedEntity
+                if (target != null && target.isAlive) {
+                    if (player.distanceTo(target) > range) {
+                        lockedEntity = null
+                    } else {
+                        val partialTick = event.partialTick.toFloat()
+                        val hasGravity = data.perk.getLevel(ModPerks.MICRO_MISSILE) <= 0
+                        val toVec = RangeTool.calculateFiringSolution(
+                            player.getEyePosition(partialTick),
+                            target.getEyePosition(partialTick),
+                            target.deltaMovement.scale(0.5),
+                            data.get(GunProp.VELOCITY),
+                            if (hasGravity) data.get(GunProp.GRAVITY) else 0.0
+                        )
+                        look(player, toVec)
                     }
                 }
             } else {
                 lockedEntity = null
             }
+
 
             lastX = player.xRot
             lastY = player.yRot
@@ -3504,6 +3609,7 @@ object ClientEventHandler {
      * 只清"上一把枪残留的运行时状态"
      */
     fun resetGunTransientState() {
+        pendingFireInput.reset()
         clientTimer.stop()
         fireCooldown = 0.0
 //        holdingFireKey = false
@@ -3512,6 +3618,7 @@ object ClientEventHandler {
         ClickEventHandler.switchZoom = false
         burstFireAmount = 0
         chargeActive = false
+        chargeArmed = false
         chargeProgress = 0.0
         chargePower = 0.0
         noSprintTicks = 10f
@@ -3534,8 +3641,6 @@ object ClientEventHandler {
     @Suppress("DEPRECATION")
     fun resetUseActionStatus() {
         GunChargeHandler.reset()
-        heavyStrikeRequested = false
-        heavyStrikeBuffer = 0
 
         // YSM联动保留字段，不要删除：旧版切枪时会把刺雷的 draw 窗口重置成 30 tick
         lungeSprint = 0
@@ -3547,8 +3652,7 @@ object ClientEventHandler {
     private fun handleWeaponDraw(entity: LivingEntity) {
         val times = getDelta()
         val handling = ActiveGun.handlingData(entity) ?: return
-        val weight = handling.item.getHandlingCustomWeight(handling)
-        val duration = handling.get(GunProp.DRAW_TIME).coerceAtLeast(1) + 0.5 * weight
+        val duration = handling.item.handlingDrawDuration(handling)
         val decay = ln(100.0) / duration
         drawTime = (drawTime - decay * times * drawTime).coerceAtLeast(0.0)
     }
@@ -3679,15 +3783,6 @@ object ClientEventHandler {
             Component.translatable("tips.superbwarfare.vehicle_reset_kit_3")
                 .withStyle(ChatFormatting.AQUA).withStyle(ChatFormatting.UNDERLINE), false
         )
-    }
-
-    @SubscribeEvent
-    fun onFogColor(event: ViewportEvent.ComputeFogColor) {
-        if (activeThermalImaging) {
-            event.red = 0.1F
-            event.green = 0.1F
-            event.blue = 0.1F
-        }
     }
 
     @SubscribeEvent

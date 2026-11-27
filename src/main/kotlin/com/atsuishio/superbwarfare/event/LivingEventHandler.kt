@@ -2,6 +2,8 @@ package com.atsuishio.superbwarfare.event
 
 import com.atsuishio.superbwarfare.api.event.PreKillEvent.Indicator
 import com.atsuishio.superbwarfare.api.event.PreKillEvent.SendKillMessage
+import com.atsuishio.superbwarfare.block.ItemDisplayBoardBlock
+import com.atsuishio.superbwarfare.block.entity.ItemDisplayBoardBlockEntity
 import com.atsuishio.superbwarfare.config.common.GameplayConfig
 import com.atsuishio.superbwarfare.config.server.MiscConfig
 import com.atsuishio.superbwarfare.config.server.VehicleConfig
@@ -9,6 +11,7 @@ import com.atsuishio.superbwarfare.data.gun.*
 import com.atsuishio.superbwarfare.data.gun.value.ReloadState
 import com.atsuishio.superbwarfare.entity.living.TargetEntity
 import com.atsuishio.superbwarfare.entity.mixin.ICustomKnockback
+import com.atsuishio.superbwarfare.entity.projectile.PerkAwareProjectile
 import com.atsuishio.superbwarfare.entity.vehicle.base.AutoAimableEntity
 import com.atsuishio.superbwarfare.entity.vehicle.base.VehicleEntity
 import com.atsuishio.superbwarfare.init.*
@@ -41,12 +44,15 @@ import net.minecraft.world.entity.projectile.Projectile
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.level.Explosion
 import net.minecraft.world.phys.Vec3
+import net.neoforged.bus.api.EventPriority
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
+import net.neoforged.neoforge.common.damagesource.DamageContainer
 import net.neoforged.neoforge.common.util.TriState
 import net.neoforged.neoforge.event.entity.living.*
 import net.neoforged.neoforge.event.entity.living.MobEffectEvent.Applicable
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent
+import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent
 import net.neoforged.neoforge.event.level.ExplosionEvent
 import net.neoforged.neoforge.event.level.ExplosionKnockbackEvent
 import java.util.*
@@ -56,6 +62,25 @@ import kotlin.math.sqrt
 
 @EventBusSubscriber
 object LivingEventHandler {
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    fun onMeleeDamage(event: LivingDamageEvent.Post) {
+        val target = event.entity
+        if (target.level().isClientSide || !DamageTypeTool.isMeleeDamage(event.source)) return
+        // Post includes actual absorption consumption, even when no health damage remains.
+        val damage = event.newDamage.coerceAtLeast(0f) +
+                event.getReduction(DamageContainer.Reduction.ABSORPTION).coerceAtLeast(0f)
+        if (damage <= 0f) return
+        val attacker = event.source.entity as? LivingEntity ?: return
+        val stack = attacker.mainHandItem
+        if (stack.item !is GunItem) return
+        val data = GunData.from(stack)
+        for (type in Perk.Type.entries) {
+            data.perk.getInstances(type).forEach {
+                it.perk.onMeleeDamage(damage, data, it, target, event.source)
+            }
+        }
+    }
+
     @SubscribeEvent
     fun onLivingChangeTargetEvent(event: LivingChangeTargetEvent) {
         val entity = event.entity
@@ -566,16 +591,17 @@ object LivingEventHandler {
 
         if (attacker == null) return
 
-        val stack = attacker.mainHandItem
-        if (stack.item !is GunItem) return
-
+        val shot = (directEntity as? PerkAwareProjectile)?.shotPerks
+        val data = shot?.data ?: run {
+            val stack = attacker.mainHandItem
+            if (stack.item !is GunItem) return
+            GunData.from(stack)
+        }
         var damage = event.amount
-
-        val data = GunData.from(stack)
         // 本段动作 + 来源：由 `MeleeAttackMessage` 在同 tick 写入（近战伤害的因果链就在一个 tick 内）
         val meleeContext = if (attacker is Player) MeleeAttackContext.get(attacker.uuid) else null
         for (type in Perk.Type.entries) {
-            val instance = data.perk.getInstances(type)
+            val instance = shot?.instances?.get(type) ?: data.perk.getInstances(type)
 
             instance.forEach {
                 if (DamageTypeTool.isGunDamage(source)) {
@@ -615,12 +641,14 @@ object LivingEventHandler {
 
         if (attacker == null) return
 
-        val stack = attacker.mainHandItem
-        if (stack.item !is GunItem) return
-
-        val data = GunData.from(stack)
+        val shot = (directEntity as? PerkAwareProjectile)?.shotPerks
+        val data = shot?.data ?: run {
+            val stack = attacker.mainHandItem
+            if (stack.item !is GunItem) return
+            GunData.from(stack)
+        }
         for (type in Perk.Type.entries) {
-            val instance = data.perk.getInstances(type)
+            val instance = shot?.instances?.get(type) ?: data.perk.getInstances(type)
             instance.forEach { it.perk.onKill(data, it, event.entity, source) }
         }
     }
@@ -788,7 +816,8 @@ object LivingEventHandler {
                         val impactStrength = (1.0 - distanceRatio) * visibilityFactor
                         val damage = (impactStrength * impactStrength + impactStrength) / 2.0 * explosion.damage
 
-                        entity.hurt(explosion.damageSource, damage.toFloat())
+                        val amount = damage.toFloat()
+                        explosion.applyDamageWithPerks(entity, amount) { entity.hurt(explosion.damageSource, amount) }
                     }
                 }
             }
@@ -800,5 +829,22 @@ object LivingEventHandler {
         if (event.affectedEntity is VehicleEntity) {
             event.knockbackVelocity = Vec3.ZERO
         }
+    }
+
+    @SubscribeEvent
+    fun onRightClickBlock(event: PlayerInteractEvent.RightClickBlock) {
+        val level = event.level
+        val pos = event.pos
+        if (level.getBlockState(pos).block !is ItemDisplayBoardBlock) return
+
+        val player = event.entity
+        if (player.isSpectator || !player.isShiftKeyDown) return
+
+        val board = level.getBlockEntity(pos) as? ItemDisplayBoardBlockEntity ?: return
+        if (!board.hasItem) return
+
+        // 允许潜行时执行展示板的交互，取下操作仍走方块本身的客户端预测和服务端逻辑。
+        event.useBlock = TriState.TRUE
+        event.useItem = TriState.FALSE
     }
 }

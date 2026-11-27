@@ -120,10 +120,23 @@ object ModBlockEntities {
     }
 
     @JvmField
+    val BOOBY_TRAP = registerBlockEntity("booby_trap") {
+        BlockEntityType.Builder.of(::BoobyTrapBlockEntity, ModBlocks.BOOBY_TRAP.get()).build(null)
+    }
+
+    @JvmField
     val TRIPOD = registerBlockEntity("tripod") {
         BlockEntityType.Builder.of(
             { pos, state -> TripodBlockEntity(pos, state) },
             ModBlocks.TRIPOD.get()
+        ).build(null)
+    }
+
+    @JvmField
+    val ITEM_DISPLAY_BOARD = registerBlockEntity("item_display_board") {
+        BlockEntityType.Builder.of(
+            { pos, state -> ItemDisplayBoardBlockEntity(pos, state) },
+            ModBlocks.ITEM_DISPLAY_BOARD.get()
         ).build(null)
     }
 
@@ -133,5 +146,10 @@ object ModBlockEntities {
             { pos, state -> BiogasGeneratorBlockEntity(pos, state) },
             ModBlocks.BIOGAS_GENERATOR.get()
         ).build(null)
+    }
+
+    @JvmField
+    val SHELF = registerBlockEntity("shelf") {
+        BlockEntityType.Builder.of(::ShelfBlockEntity, ModBlocks.SHELF.get()).build(null)
     }
 }

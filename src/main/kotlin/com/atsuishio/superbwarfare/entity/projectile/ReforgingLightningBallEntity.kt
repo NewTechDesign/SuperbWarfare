@@ -3,6 +3,7 @@ package com.atsuishio.superbwarfare.entity.projectile
 import com.atsuishio.superbwarfare.client.animation.entity.BasicProjectileAnimationInstance
 import com.atsuishio.superbwarfare.entity.multipartRoot
 import com.atsuishio.superbwarfare.init.ModDamageTypes
+import com.atsuishio.superbwarfare.init.ModMobEffects
 import com.atsuishio.superbwarfare.init.ModSounds
 import com.atsuishio.superbwarfare.network.message.receive.ReforgingLightningArcMessage
 import com.atsuishio.superbwarfare.tools.*
@@ -11,11 +12,11 @@ import net.minecraft.nbt.CompoundTag
 import net.minecraft.network.syncher.SynchedEntityData
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.sounds.SoundSource
+import net.minecraft.world.effect.MobEffectInstance
 import net.minecraft.world.entity.Entity
 import net.minecraft.world.entity.EntityType
 import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.entity.player.Player
-import net.minecraft.world.entity.projectile.Projectile
 import net.minecraft.world.level.Level
 import net.minecraft.world.phys.AABB
 import net.minecraft.world.phys.Vec3
@@ -23,7 +24,7 @@ import net.neoforged.neoforge.entity.PartEntity
 import java.util.function.Consumer
 
 open class ReforgingLightningBallEntity(type: EntityType<out ReforgingLightningBallEntity>, level: Level) :
-    Projectile(type, level), IBulletProperties, BasicGeoProjectileEntity {
+    PerkAwareProjectile(type, level), BasicGeoProjectileEntity {
 
     private val animation = if (level.isClientSide) BasicProjectileAnimationInstance(this, true) else null
 
@@ -32,11 +33,14 @@ open class ReforgingLightningBallEntity(type: EntityType<out ReforgingLightningB
     private var damage = 6f
     private var explosionDamage = 6f
     private var explosionRadius = 8f
+    private var explosionPenetrationRatio: Float = CustomExplosion.DEFAULT_PENETRATION_RATIO
     private var life = 100
     private var age = 0
     private var attackInterval = 10
     private var maxTargets = 4
     private var detonated = false
+    var volt: Int = 0
+        set(value) { field = value.coerceAtLeast(0) }
 
     // Populated only by server-to-client discharge notifications; never used for damage.
     val lightningArcs = mutableListOf<LightningArc>()
@@ -64,6 +68,11 @@ open class ReforgingLightningBallEntity(type: EntityType<out ReforgingLightningB
     override fun getExplosionRadius() = explosionRadius
     override fun setExplosionRadius(value: Float) {
         explosionRadius = value.coerceIn(0f, 32f)
+    }
+
+    override fun getExplosionPenetrationRatio() = explosionPenetrationRatio
+    override fun setExplosionPenetrationRatio(value: Float) {
+        explosionPenetrationRatio = value.coerceIn(0f, CustomExplosion.MAX_PENETRATION_RATIO)
     }
 
     override fun getLife() = life
@@ -127,18 +136,12 @@ open class ReforgingLightningBallEntity(type: EntityType<out ReforgingLightningB
             .filter { touchesTarget(it.boundingBox, start, end, halfWidth, halfHeight) }
             .sortedBy { it.boundingBox.distanceToSqr(start) }
             .distinctBy { it.multipartRoot.id }
-        val source = ModDamageTypes.causeShockDamage(level().registryAccess(), this, owner)
         for (target in targets) {
-            target.multipartRoot.invulnerableTime = 0
-            target.invulnerableTime = 0
-            // Keep the part as the damage recipient: its hurt() routes native part-specific damage.
-            target.forceHurt(source, getDamage())
-            dischargeVisual(target)
+            hit(target, getDamage())
         }
     }
 
     private fun discharge() {
-        val shooter = owner
         val attackRadius = getExplosionRadius().toDouble()
         if (attackRadius <= 0.0 || getExplosionDamage() <= 0f) return
         val targets = level().getEntities(this, AABB(position(), position()).inflate(attackRadius), ::canAffect)
@@ -148,14 +151,23 @@ open class ReforgingLightningBallEntity(type: EntityType<out ReforgingLightningB
             .take(maxTargets)
 
         if (targets.isEmpty()) return
-        val source = ModDamageTypes.causeShockDamage(level().registryAccess(), this, shooter)
         for (target in targets) {
-            target.multipartRoot.invulnerableTime = 0
-            target.invulnerableTime = 0
-            target.forceHurt(source, getExplosionDamage())
-            dischargeVisual(target)
+            hit(target, getExplosionDamage())
         }
         level().playSound(null, x, y, z, ModSounds.LIGHTNING_BALL_ATTACK.get(), SoundSource.PLAYERS, 3f, 1f)
+    }
+
+    private fun hit(target: Entity, damage: Float) {
+        val root = target.multipartRoot as? LivingEntity ?: return
+        if (!dispatchEntityHit(root, target.boundingBox.center, damage)) return
+        root.invulnerableTime = 0
+        target.invulnerableTime = 0
+        // Preserve native part-specific damage routing, but apply the effect to the living root.
+        if (target.forceHurt(ModDamageTypes.causeShockDamage(level().registryAccess(), this, owner), damage)) {
+            applyAmmoEffects(root)
+        }
+        root.forceApplyEffect(MobEffectInstance(ModMobEffects.SHOCK, 100 + volt * 30, volt), owner)
+        dischargeVisual(target)
     }
 
     private fun dischargeVisual(target: Entity) {
@@ -181,6 +193,7 @@ open class ReforgingLightningBallEntity(type: EntityType<out ReforgingLightningB
                 }
                 CustomExplosion.Builder(this)
                     .damageSource(ModDamageTypes.causeShockDamage(level().registryAccess(), this, owner))
+                    .withProjectilePerks(this)
                     .damage(getExplosionDamage())
                     .radius(getExplosionRadius())
                     .position(position())
@@ -211,6 +224,7 @@ open class ReforgingLightningBallEntity(type: EntityType<out ReforgingLightningB
         if (tag.contains("Age")) age = tag.getInt("Age").coerceAtLeast(0)
         if (tag.contains("AttackInterval")) attackInterval = tag.getInt("AttackInterval").coerceAtLeast(1)
         if (tag.contains("MaxTargets")) maxTargets = tag.getInt("MaxTargets").coerceIn(1, 32)
+        if (tag.contains("Volt")) volt = tag.getInt("Volt")
     }
 
     override fun addAdditionalSaveData(tag: CompoundTag) {
@@ -222,6 +236,7 @@ open class ReforgingLightningBallEntity(type: EntityType<out ReforgingLightningB
         tag.putInt("Age", age)
         tag.putInt("AttackInterval", attackInterval)
         tag.putInt("MaxTargets", maxTargets)
+        tag.putInt("Volt", volt)
     }
 
     companion object {

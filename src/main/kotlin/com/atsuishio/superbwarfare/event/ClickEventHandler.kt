@@ -1,9 +1,12 @@
 package com.atsuishio.superbwarfare.event
 
+import com.atsuishio.superbwarfare.block.ShelfBlock
 import com.atsuishio.superbwarfare.client.gun.GunChargeHandler
 import com.atsuishio.superbwarfare.client.gun.MeleeClientHandler
+import com.atsuishio.superbwarfare.client.lighting.FlashlightHandler
 import com.atsuishio.superbwarfare.client.overlay.OverlayTraceHandler
 import com.atsuishio.superbwarfare.client.overlay.ammo.AmmoBarHud
+import com.atsuishio.superbwarfare.client.renderer.scope.ScopeThermalRenderer
 import com.atsuishio.superbwarfare.client.screens.LoiterConfigScreen
 import com.atsuishio.superbwarfare.client.screens.MissilePosInputScreen
 import com.atsuishio.superbwarfare.client.screens.TacticalMapScreen
@@ -17,7 +20,10 @@ import com.atsuishio.superbwarfare.data.gun.*
 import com.atsuishio.superbwarfare.data.vehicle.subdata.EngineType
 import com.atsuishio.superbwarfare.entity.vehicle.MortarEntity
 import com.atsuishio.superbwarfare.entity.vehicle.base.VehicleEntity
-import com.atsuishio.superbwarfare.init.*
+import com.atsuishio.superbwarfare.init.ModItems
+import com.atsuishio.superbwarfare.init.ModKeyMappings
+import com.atsuishio.superbwarfare.init.ModMobEffects
+import com.atsuishio.superbwarfare.init.ModSounds
 import com.atsuishio.superbwarfare.item.ItemScreenProvider
 import com.atsuishio.superbwarfare.item.curio.TacticalTerminalItem
 import com.atsuishio.superbwarfare.item.gun.GunItem
@@ -35,11 +41,14 @@ import net.minecraft.world.InteractionHand
 import net.minecraft.world.entity.player.Player
 import net.minecraft.world.item.ItemStack
 import net.minecraft.world.item.Items
+import net.minecraft.world.phys.BlockHitResult
+import net.minecraft.world.phys.HitResult
 import net.minecraft.world.phys.Vec3
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.ModList
 import net.neoforged.fml.common.EventBusSubscriber
+import net.neoforged.neoforge.client.event.ClientTickEvent
 import net.neoforged.neoforge.client.event.InputEvent
 import net.neoforged.neoforge.client.settings.KeyConflictContext
 import org.lwjgl.glfw.GLFW
@@ -53,6 +62,12 @@ object ClickEventHandler {
     /** 右键是否按着；枪械会 cancel 掉这个按键，`KeyMapping.isDown()` 之后就不再更新了 */
     var useKeyHeld: Boolean = false
         private set
+
+    /** 手电/激光键的长按判定阈值（tick）。 */
+    private const val LIGHT_LONG_PRESS_TICKS = 9
+    private var lightKeyDown = false
+    private var lightPressTicks = 0
+    private var lightLongFired = false
 
     private fun isUseMouseButton(button: Int): Boolean =
         (ModKeyMappings.HOLD_ZOOM.key.type == InputConstants.Type.MOUSE
@@ -119,6 +134,11 @@ object ClickEventHandler {
         if (player.isSpectator) return
 
         if (player.hasEffect(ModMobEffects.SHOCK)) {
+            event.isCanceled = true
+            return
+        }
+
+        if (mc.options.keyAttack.matchesMouse(event.button) && handleShelfAttack(true)) {
             event.isCanceled = true
             return
         }
@@ -192,6 +212,30 @@ object ClickEventHandler {
         }
     }
 
+    @SubscribeEvent
+    fun onShelfAttack(event: InputEvent.InteractionKeyMappingTriggered) {
+        if (!event.isAttack || !handleShelfAttack(false)) return
+        event.isCanceled = true
+        event.setSwingHand(false)
+    }
+
+    private fun handleShelfAttack(take: Boolean): Boolean {
+        if (notInGame) return false
+        val player = localPlayer ?: return false
+        if (player.isSpectator || player.isUsingItem || player.isHandsBusy) return false
+        val hit = mc.hitResult as? BlockHitResult ?: return false
+        if (hit.type != HitResult.Type.BLOCK) return false
+        val state = player.level().getBlockState(hit.blockPos)
+        if (state.block !is ShelfBlock || hit.direction != state.getValue(ShelfBlock.FACING)) return false
+        val gameMode = mc.gameMode ?: return false
+        gameMode.stopDestroyBlock()
+        if (take) {
+            gameMode.startDestroyBlock(hit.blockPos, hit.direction)
+            player.swing(InteractionHand.MAIN_HAND)
+        }
+        return true
+    }
+
     /**
      * 枪械交互时禁止挥舞手臂
      */
@@ -199,8 +243,10 @@ object ClickEventHandler {
     fun stopSwing(event: InputEvent.InteractionKeyMappingTriggered) {
         val player = localPlayer ?: return
         // 手持副武器时按普通物品处理
-        if (GunItem.isHeldWeapon(player.getItemInHand(event.hand))) {
+        val stack = player.getItemInHand(event.hand)
+        if (GunItem.isHeldWeapon(stack)) {
             event.setSwingHand(false)
+            if (event.isAttack && GunData.from(stack).get(GunProp.CAN_HARVEST)) event.isCanceled = true
         }
     }
 
@@ -266,6 +312,47 @@ object ClickEventHandler {
     }
 
     @SubscribeEvent
+    fun onClientTick(event: ClientTickEvent.Post) {
+        val mc = Minecraft.getInstance()
+        val inactive = notInGame || mc.screen != null
+        val down = if (inactive) false else ModKeyMappings.TOGGLE_LIGHT.isDown
+
+        if (down) {
+            if (!lightKeyDown) {
+                lightPressTicks = 0
+                lightLongFired = false
+            }
+            lightPressTicks++
+            if (!lightLongFired && lightPressTicks >= LIGHT_LONG_PRESS_TICKS) {
+                if (FlashlightHandler.turnOffAllLocal()) {
+                    localPlayer?.playSound(ModSounds.CANNON_ZOOM_OUT.get(), 1f, 1f)
+                }
+                lightLongFired = true
+            }
+        } else if (lightKeyDown && !lightLongFired && !inactive) {
+            if (FlashlightHandler.cycleAllLocal()) {
+                localPlayer?.playSound(ModSounds.CANNON_ZOOM_OUT.get(), 1f, 1f)
+            }
+        }
+
+        lightKeyDown = down
+        if (!down) lightLongFired = false
+    }
+
+    @JvmStatic
+    fun handleScopeThermalKey(player: Player): Boolean {
+        if (!ScopeThermalRenderer.isAimingThermalScope(player.mainHandItem)) return false
+
+        ClientEventHandler.scopeThermalEnabled = !ClientEventHandler.scopeThermalEnabled
+        if (ClientEventHandler.scopeThermalEnabled) {
+            player.playSound(ModSounds.CANNON_ZOOM_OUT.get())
+        } else {
+            player.playSound(ModSounds.CANNON_ZOOM_OUT.get())
+        }
+        return true
+    }
+
+    @SubscribeEvent
     fun onKeyPressed(event: InputEvent.Key) {
         if (notInGame) return
 
@@ -277,11 +364,17 @@ object ClickEventHandler {
         if (player.isSpectator) return
         if (player.hasEffect(ModMobEffects.SHOCK)) return
 
+        if (event.action == InputConstants.PRESS && mc.options.keyAttack.matches(key, event.scanCode)
+            && handleShelfAttack(true)) return
+
         val stack = player.mainHandItem
         val vehicle = player.vehicle
 
         if (event.action == GLFW.GLFW_PRESS) {
             if (key == ModKeyMappings.ACTIVE_THERMAL_IMAGING.key.value) {
+                // 正在通过热融合瞄准镜瞄准时，K 开关镜内热融合效果，优先级高于护目镜/载具热成像
+                if (handleScopeThermalKey(player)) return
+
                 if (vehicle is VehicleEntity) {
                     val index = vehicle.getSeatIndex(player)
                     val seat = vehicle.computed().seats().getOrNull(index)
@@ -543,8 +636,9 @@ object ClickEventHandler {
         // 冲锋窗口里不许开火（近战专属枪械的左键是挥击，不算开火）
         if (GunChargeHandler.isCharging() && !GunData.from(gunStack).meleeOnly()) return
 
-        // 射击周期内的点击排到周期结束补发（松开左键也不清）
-        if (!notInGame && ClientEventHandler.clientTimer.progress != 0L) {
+        ClientEventHandler.expireBufferedFireInput()
+        // 仅在射击周期末尾的短窗口内接收 SEMI 预输入；超时后不再补发。
+        if (!notInGame && ClientEventHandler.clientTimer.started()) {
             val data = GunData.from(gunStack)
             if (data.selectedFireModeInfo().mode == FireMode.SEMI
                 && !data.meleeOnly()
@@ -552,8 +646,8 @@ object ClickEventHandler {
                 && ClientEventHandler.drawTime < 0.01
                 && ClientEventHandler.burstFireAmount == 0
                 && item.canShoot(data, player)
+                && ClientEventHandler.queueBufferedSemiFireInput(player, data)
             ) {
-                ClientEventHandler.burstFireAmount = 1
                 ClientEventHandler.noSprintTicks = 3f
                 ClientEventHandler.holdingFireKey = true
                 player.setSprinting(false)
@@ -561,7 +655,7 @@ object ClickEventHandler {
             return
         }
 
-        if (ClientEventHandler.clientTimer.progress == 0L
+        if (!ClientEventHandler.clientTimer.started()
             && !notInGame
         ) {
             val data = GunData.from(gunStack)
@@ -573,6 +667,7 @@ object ClickEventHandler {
                 if (chargeConfig != null) {
                     // 空弹或装箭期间也记住按住左键；就绪后自动开始蓄力，松手仍由 release 清除。
                     ClientEventHandler.chargeActive = item.canShoot(data, player)
+                    ClientEventHandler.chargeArmed = true
                     ClientEventHandler.chargeProgress = 0.0
                     ClientEventHandler.chargePower = 0.0
                     ClientEventHandler.holdingFireKeyTicks = 0
@@ -621,14 +716,14 @@ object ClickEventHandler {
                     if (fireMode == FireMode.BURST) {
                         if (ClientEventHandler.burstFireAmount == 0) {
                             ClientEventHandler.noSprintTicks = 8f
+                            ClientEventHandler.queueFireInput(player, data.get(GunProp.BURST_AMOUNT))
                             player.isSprinting = false
-                            ClientEventHandler.burstFireAmount = data.get(GunProp.BURST_AMOUNT)
                         }
                     } else if (fireMode == FireMode.SEMI) {
                         if (ClientEventHandler.burstFireAmount == 0) {
                             ClientEventHandler.noSprintTicks = 3f
+                            ClientEventHandler.queueFireInput(player, 1)
                             player.isSprinting = false
-                            ClientEventHandler.burstFireAmount = 1
                         }
                     }
 
@@ -658,10 +753,15 @@ object ClickEventHandler {
             0.0
         }
         val chargePower = chargeConfig?.powerForProgress(releaseProgress) ?: ClientEventHandler.chargePower
+        // 本次扳机行程是否还欠这一发（下面会立刻作废，松开扳机后必须重新按下）
+        val armed = ClientEventHandler.chargeArmed
 
         sendPacketToServer(FireKeyMessage(1, chargePower, ClientEventHandler.zoom))
         ClientEventHandler.holdingFireKey = false
+        ClientEventHandler.releaseQueuedFireInput(player)
         ClientEventHandler.chargeActive = false
+        // 松开扳机即作废这一次蓄力：下一次开火必须重新按下扳机、重新蓄满
+        ClientEventHandler.chargeArmed = false
         ClientEventHandler.chargeProgress = 0.0
         ClientEventHandler.chargePower = 0.0
 
@@ -677,7 +777,7 @@ object ClickEventHandler {
             val fireMode = ActiveGun.dataOf(player)?.selectedFireModeInfo()?.mode
                 ?: data.selectedFireModeInfo().mode
 
-            // SEMI 的 burstFireAmount 是排着的那一发，松开左键不清
+            // 短有效期内的 SEMI 预输入与已开始的 BURST 保留；冲刺挡住的首发已在上面取消。
             if (fireMode != FireMode.BURST && fireMode != FireMode.SEMI) {
                 ClientEventHandler.burstFireAmount = 0
             }
@@ -689,7 +789,8 @@ object ClickEventHandler {
                     ChargeTrigger.AUTO_AT_FULL -> false
                 }
                 if (releaseAllowed && chargePower >= chargeConfig.effectiveMinPower) {
-                    ClientEventHandler.shootClient(player, chargePower)
+                    // 这里消费掉本次扳机行程，避免同一次松开被重复利用
+                    if (armed) ClientEventHandler.shootClient(player, chargePower)
                 }
             }
 
@@ -726,7 +827,7 @@ object ClickEventHandler {
         if (item != null && item.onUseActionPress(player, gunStack, data)) return
 
         when (data.get(GunProp.RIGHT_CLICK_ACTION)) {
-            RightClickAction.HEAVY_STRIKE -> ClientEventHandler.requestHeavyStrike()
+            RightClickAction.HEAVY_STRIKE -> ClientEventHandler.requestHeavyStrike(player)
             RightClickAction.HEAVY_HOLD -> MeleeClientHandler.beginHeavyHold(player, gunStack)
             RightClickAction.BAYONET_CHARGE -> GunChargeHandler.start(gunStack, data)
             else -> handleWeaponAimPress(player, gunStack, data)
@@ -741,15 +842,12 @@ object ClickEventHandler {
         sendPacketToServer(ZoomMessage(0))
         ClientEventHandler.zoom = true
 
-        val level = data.perk.getLevel(ModPerks.INTELLIGENT_CHIP)
-        if (level > 0) {
-            if (ClientEventHandler.lockedEntity == null) {
-                ClientEventHandler.lockedEntity =
-                    if (data.perk.has(ModPerks.PHASE_PENETRATING_BULLET.get()) || data.perk.has(ModPerks.BEAST_BULLET.get())) {
-                        SeekTool.seekEntityThroughWall(player, 32 + 8 * (level - 1).toDouble(), 20.0)
-                    } else {
-                        SeekTool.seekLivingEntity(player, 32 + 8 * (level - 1).toDouble(), 20.0)
-                    }
+        if (data.get(GunProp.AUTO_AIM) && ClientEventHandler.lockedEntity == null) {
+            val range = data.get(GunProp.AUTO_AIM_RANGE)
+            ClientEventHandler.lockedEntity = if (data.get(GunProp.PROJECTILE_PENETRATING)) {
+                SeekTool.seekEntityThroughWall(player, range, 20.0)
+            } else {
+                SeekTool.seekLivingEntity(player, range, 20.0)
             }
         }
     }

@@ -26,6 +26,26 @@
       }
     ]
   },
+  "a_762_fire_1p": {
+    "sounds": [
+      "superbwarfare:gun/a_762/a_762_fire_1p"
+    ]
+  },
+  "a_762_fire_1p_s": {
+    "sounds": [
+      "superbwarfare:gun/a_762/a_762_fire_1p_s"
+    ]
+  },
+  "a_762_fire_3p": {
+    "sounds": [
+      "superbwarfare:gun/a_762/a_762_fire_3p"
+    ]
+  },
+  "a_762_fire_3p_s": {
+    "sounds": [
+      "superbwarfare:gun/a_762/a_762_fire_3p_s"
+    ]
+  },
   "aa_12_bolt_close": {
     "sounds": [
       "superbwarfare:gun/aa_12/aa_12_bolt_close"
@@ -777,6 +797,16 @@
   "firerate": {
     "sounds": [
       "superbwarfare:firerate"
+    ]
+  },
+  "flashbang_burst": {
+    "sounds": [
+      "superbwarfare:flashbang_burst"
+    ]
+  },
+  "flashbang_ringing": {
+    "sounds": [
+      "superbwarfare:flashbang_ringing"
     ]
   },
   "glock_17_far": {
@@ -2351,6 +2381,28 @@
     "sounds": [
       "superbwarfare:gun/ntw_20/ntw_20_veryfar"
     ]
+  },
+  "nuke_explosion_close": {
+    "sounds": [
+      "superbwarfare:explosion/nuke_explosion_close_01",
+      "superbwarfare:explosion/nuke_explosion_close_02",
+      "superbwarfare:explosion/nuke_explosion_close_03"
+    ],
+    "subtitle": "subtitle.superbwarfare.explosion"
+  },
+  "nuke_explosion_far": {
+    "sounds": [
+      "superbwarfare:explosion/nuke_explosion_far_01",
+      "superbwarfare:explosion/nuke_explosion_far_02",
+      "superbwarfare:explosion/nuke_explosion_far_03"
+    ],
+    "subtitle": "subtitle.superbwarfare.explosion"
+  },
+  "nuke_explosion_very_far": {
+    "sounds": [
+      "superbwarfare:explosion/nuke_explosion_very_far"
+    ],
+    "subtitle": "subtitle.superbwarfare.explosion"
   },
   "open": {
     "sounds": [

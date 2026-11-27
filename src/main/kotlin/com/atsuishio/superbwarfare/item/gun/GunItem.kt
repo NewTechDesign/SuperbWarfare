@@ -10,6 +10,7 @@ import com.atsuishio.superbwarfare.data.CustomData
 import com.atsuishio.superbwarfare.data.PMC
 import com.atsuishio.superbwarfare.data.PropertyModifier
 import com.atsuishio.superbwarfare.data.gun.*
+import com.atsuishio.superbwarfare.data.gun.melee.MeleeHarvest
 import com.atsuishio.superbwarfare.data.gun.melee.ProjectileMarker
 import com.atsuishio.superbwarfare.data.gun.melee.isEngineProjectileMarker
 import com.atsuishio.superbwarfare.data.gun.melee.normalizeProjectileMarker
@@ -30,8 +31,11 @@ import com.atsuishio.superbwarfare.item.ItemScreenProvider
 import com.atsuishio.superbwarfare.item.gun.GunItem.Companion.HANDLING_WEIGHT_SCALE
 import com.atsuishio.superbwarfare.item.gun.GunItem.Companion.resolveShootDirection
 import com.atsuishio.superbwarfare.network.message.receive.ClientIndicatorMessage
+import com.atsuishio.superbwarfare.network.message.receive.GunMuzzleFxMessage
+import com.atsuishio.superbwarfare.perk.AutoAimHelper
 import com.atsuishio.superbwarfare.perk.Perk
 import com.atsuishio.superbwarfare.resource.gun.GunResource
+import com.atsuishio.superbwarfare.tiers.ModItemTier
 import com.atsuishio.superbwarfare.tools.*
 import com.atsuishio.superbwarfare.world.phys.EntityResult
 import net.minecraft.client.gui.screens.Screen
@@ -57,6 +61,7 @@ import net.minecraft.world.entity.projectile.ProjectileUtil
 import net.minecraft.world.inventory.tooltip.TooltipComponent
 import net.minecraft.world.item.Item
 import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.Tiers
 import net.minecraft.world.item.TooltipFlag
 import net.minecraft.world.item.component.ItemAttributeModifiers
 import net.minecraft.world.item.enchantment.Enchantment
@@ -124,7 +129,7 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
 
         if (data.get(GunProp.MAX_ENERGY) > 0) {
             val cap = stack.getCapability(Capabilities.EnergyStorage.ITEM)
-            return Math.round((cap?.energyStored ?: 0).toFloat() * 13f / GunData.get(stack, GunProp.MAX_ENERGY))
+            return Math.round((cap?.energyStored ?: 0).toFloat() * 13f / GunData.get(stack, GunProp.MAX_ENERGY)).coerceIn(0, 13)
         }
 
         return super.getBarWidth(stack)
@@ -161,7 +166,40 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
      */
     open fun isInitialized(data: GunData) = data.uuid != null
 
-    override fun canAttackBlock(pState: BlockState, pLevel: Level, pPos: BlockPos, pPlayer: Player) = false
+    internal fun canHarvest(data: GunData): Boolean =
+        data.get(GunProp.CAN_HARVEST) && useAsWeaponInHand() && hasMeleeAttack(data) && !isBroken(data.stack)
+
+    private fun isHarvestToolFor(data: GunData, state: BlockState): Boolean =
+        canHarvest(data) && data.get(GunProp.MINEABLE_BLOCK_TAGS).any { state.`is`(it) }
+
+    override fun canAttackBlock(state: BlockState, level: Level, pos: BlockPos, player: Player): Boolean =
+        MeleeHarvest.isFinishing(player, pos, this)
+
+    override fun mineBlock(stack: ItemStack, level: Level, state: BlockState, pos: BlockPos, miner: LivingEntity): Boolean {
+        if (!canHarvest(GunData.from(stack))) return false
+        if (!level.isClientSide && state.getDestroySpeed(level, pos) != 0f) {
+            stack.hurtAndBreak(1, miner, EquipmentSlot.MAINHAND)
+        }
+        return true
+    }
+
+    override fun getDestroySpeed(stack: ItemStack, state: BlockState): Float {
+        val data = GunData.from(stack)
+        return if (isHarvestToolFor(data, state)) data.get(GunProp.MINE_SPEED) else 1f
+    }
+
+    override fun isCorrectToolForDrops(stack: ItemStack, state: BlockState): Boolean {
+        val data = GunData.from(stack)
+        if (!isHarvestToolFor(data, state)) return false
+
+        val tierId = data.get(GunProp.HARVEST_TIER) ?: return false
+        val tier = when (tierId.namespace) {
+            "minecraft" -> Tiers.entries.firstOrNull { it.name.equals(tierId.path, ignoreCase = true) }
+            Mod.MODID -> ModItemTier.entries.firstOrNull { it.name.equals(tierId.path, ignoreCase = true) }
+            else -> null
+        } ?: return false
+        return !state.`is`(tier.incorrectBlocksForDrops)
+    }
 
     override fun inventoryTick(stack: ItemStack, level: Level, entity: Entity, slot: Int, selected: Boolean) {
         // 副武器物品（`useAsWeaponInHand() == false`）躺在背包/手上时不跑枪械状态机：
@@ -196,26 +234,12 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
                 Attributes.MOVEMENT_SPEED,
                 AttributeModifier(
                     SPEED_ID,
-                    -0.01f - 0.005f * data.get(GunProp.WEIGHT),
+                    -heldMovementSpeedPenalty(data),
                     AttributeModifier.Operation.ADD_MULTIPLIED_BASE
                 ),
                 EquipmentSlotGroup.MAINHAND
             )
         )
-
-        if (data.get(GunProp.MELEE_DAMAGE) > 0) {
-            list.add(
-                ItemAttributeModifiers.Entry(
-                    Attributes.ATTACK_DAMAGE,
-                    AttributeModifier(
-                        BASE_ATTACK_DAMAGE_ID,
-                        data.get(GunProp.MELEE_DAMAGE) - 1.0,
-                        AttributeModifier.Operation.ADD_VALUE
-                    ),
-                    EquipmentSlotGroup.MAINHAND
-                )
-            )
-        }
 
         return ItemAttributeModifiers(list, true)
     }
@@ -232,17 +256,20 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
     ) {
         super.appendHoverText(stack, context, list, flag)
 
-        val description = GunResource.compute(stack).description
-        if (description.isEmpty()) return
-
-        list.add(Component.empty())
-        for (info in description) {
-            if (info.hidden) {
-                TooltipTool.addHideText(list, info.asComponent())
-            } else {
-                list.add(info.asComponent())
+        val resource = GunResource.compute(stack)
+        val description = resource.description
+        if (description.isNotEmpty()) {
+            list.add(Component.empty())
+            for (info in description) {
+                if (info.hidden) {
+                    TooltipTool.addHideText(list, info.asComponent())
+                } else {
+                    list.add(info.asComponent())
+                }
             }
         }
+
+        resource.sponsor?.let { list.add(it.tooltipLine()) }
     }
 
     open fun getGunIcon(stack: ItemStack) = getGunIcon(GunData.from(stack))
@@ -278,7 +305,9 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
         entity: T?,
         onBroken: Consumer<Item>
     ): Int {
-        damageWithoutBreaking(stack, amount)
+        if (entity?.hasInfiniteMaterials() != true) {
+            damageWithoutBreaking(stack, amount)
+        }
         return 0
     }
 
@@ -425,6 +454,11 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
      */
     open fun getHandlingWeight(data: GunData): Double =
         data.get(GunProp.WEIGHT) + (HANDLING_WEIGHT_SCALE - 1.0) * getCustomWeight(data)
+
+    internal fun heldMovementSpeedPenalty(data: GunData): Double = 0.01f + 0.005f * data.get(GunProp.WEIGHT)
+
+    internal fun handlingDrawDuration(data: GunData): Double =
+        data.get(GunProp.DRAW_TIME).coerceAtLeast(1) + 0.5 * getHandlingCustomWeight(data)
 
     /**
      * 获取额外弹速加成
@@ -743,7 +777,9 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
         val chargeAction = data.chargeActionFor(parameters.zoom, parameters.ammoSupplier)
         data.setChargeAction(chargeAction)
         try {
-            doShoot(parameters, chargeAction)
+            val correctedDirection = AutoAimHelper.compensatedDirection(parameters)
+            val shot = if (correctedDirection == null) parameters else parameters.copy(shootDirection = correctedDirection)
+            doShoot(shot, chargeAction)
         } finally {
             data.setChargeAction(null)
         }
@@ -774,6 +810,10 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
 
         repeat(projectileAmount) { index ->
             if (!shootBullet(parameters.copy(shootDirection = spreadDirections[index]))) return
+        }
+
+        if (shooter is LivingEntity && parameters.ammoSupplier === shooter && shooter.mainHandItem.item is GunItem) {
+            shooter.sendPacketToTrackingThis(GunMuzzleFxMessage(shooter.id, data.id, ActiveGun.isSubWeapon(data)))
         }
 
         // n连发模式开火数据设置
@@ -954,14 +994,9 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
 
         val headshot = data.get(GunProp.HEADSHOT)
         val damage = data.get(GunProp.DAMAGE) * parameters.power.coerceAtLeast(0.0)
-        var velocity = (data.get(GunProp.VELOCITY) * parameters.power.coerceAtLeast(0.0)).toFloat()
         val bypassArmorRate = data.get(GunProp.BYPASSES_ARMOR)
-
-        if (VectorTool.isInLiquid(level, shootPosition)) {
-            velocity = 2 + 0.05f * velocity
-        }
-
-        val finalVelocity = velocity
+        val inLiquid = VectorTool.isInLiquid(level, shootPosition)
+        val initialVelocity = projectileLaunchSpeed(data, parameters.power, inLiquid)
 
         val entityHolder = AtomicReference<Entity?>()
 
@@ -979,22 +1014,26 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
             // SBW子弹弹射物专属属性
             if (entity is ProjectileEntity) {
                 entity.setGunItemId(stack)
+                entity.aimAssist = data.get(GunProp.AIM_ASSIST)
             }
 
             // SBW弹射物专属属性
             if (entity is IBulletProperties) {
                 with(entity) {
                     setDamage(damage.toFloat())
+                    setAllyHealRatio(data.get(GunProp.ALLY_HEAL_RATIO).toFloat())
                     setCustomGravity(data.get(GunProp.GRAVITY).toFloat())
                     setExplosionDamage(data.get(GunProp.EXPLOSION_DAMAGE).toFloat())
                     setExplosionRadius(data.get(GunProp.EXPLOSION_RADIUS).toFloat())
+                    setExplosionPenetrationRatio(data.get(GunProp.EXPLOSION_PENETRATION_RATIO).toFloat())
                     setLife(data.get(GunProp.PROJECTILE_LIFE))
                     setHeadShot(headshot.toFloat())
                     setZoom(zoom)
                     setBypassArmorRate(bypassArmorRate.toFloat())
-                    setVelocity(finalVelocity)
+                    setVelocity(initialVelocity)
                     setKnockback(data.get(GunProp.KNOCKBACK))
                     setUnderwaterMotionScale(data.get(GunProp.UNDERWATER_MOTION_SCALE))
+                    setPenetrating(data.get(GunProp.PROJECTILE_PENETRATING))
                     setExplosionDestroy(data.get(GunProp.EXPLOSION_DESTROY))
                     setProjectileSplitCount(data.get(GunProp.PROJECTILE_SPLIT_COUNT))
                     setProjectileSplitAmount(data.get(GunProp.PROJECTILE_SPLIT_AMOUNT))
@@ -1116,6 +1155,7 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
             return false
         }
 
+        if (entity is PerkAwareProjectile) entity.captureShotPerks(data)
         for (type in GunData.PERK_TYPES) {
             val instance = data.perk.getInstances(type)
             instance.forEach {
@@ -1124,8 +1164,10 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
         }
 
         val vehicle = shooter?.rootVehicle
-        if (vehicle != null && data.get(GunProp.ADD_SHOOTER_DELTA_MOVEMENT)) {
-            velocity = (vehicle.deltaMovement.length() * data.get(GunProp.VELOCITY)).toFloat()
+        val velocity = if (vehicle != null && data.get(GunProp.ADD_SHOOTER_DELTA_MOVEMENT)) {
+            projectileLaunchSpeed(data, parameters.power, inLiquid, vehicle.deltaMovement.length())
+        } else {
+            initialVelocity
         }
 
         // 发射任意实体
@@ -1420,6 +1462,23 @@ abstract class GunItem(properties: Properties) : Item(properties.stacksTo(1)), I
 
     companion object {
         private val SPEED_ID = Mod.loc("gun_movement_speed")
+
+        internal fun projectileLaunchSpeed(
+            data: GunData,
+            power: Double,
+            inLiquid: Boolean,
+            vehicleSpeed: Double? = null
+        ): Float {
+            val speed = (data.get(GunProp.VELOCITY) * (vehicleSpeed ?: power.coerceAtLeast(0.0))).toFloat()
+            if (!inLiquid) return speed
+
+            val multiplier = data.get(GunProp.UNDERWATER_LAUNCH_SPEED_MULTIPLIER)?.takeIf { it.isFinite() }
+            return when {
+                multiplier != null -> speed * multiplier.coerceIn(0f, 1f)
+                vehicleSpeed != null -> speed
+                else -> 2f + 0.05f * speed
+            }
+        }
 
         /**
          * 这个物品算不算一把枪

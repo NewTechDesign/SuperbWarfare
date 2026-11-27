@@ -15,6 +15,27 @@ object DisplayConfig {
     }
 
     @JvmField
+    val ENABLE_DISPLAY_BOARD_GUN_CACHE = buildClientConfig {
+        comment("Cache static guns and their attachments on display boards using SBM GPU meshes")
+        comment("使用 SBM GPU 网格缓存洞洞板上的静态枪械与配件，可关闭以对比渲染性能")
+        define("enable_display_board_gun_cache", true)
+    }
+
+    @JvmField
+    val ENABLE_STATIC_GUN_RENDERER = buildClientConfig {
+        comment("Use static GPU meshes and world material batching for FIXED/GROUND guns. Animations, scope effects and dynamic readouts are omitted in this path")
+        comment("FIXED/GROUND 枪械使用静态 GPU 网格和世界材质批处理；此路径不播放动画、瞄具特效和动态读数")
+        define("enable_static_gun_renderer", true)
+    }
+
+    @JvmField
+    val STATIC_GUN_RENDER_DIAGNOSTICS = buildClientConfig {
+        comment("Log static gun batch draws, material setups, buffer binds and geometry capture counts every five seconds")
+        comment("每五秒记录静态枪械批次的绘制、材质切换、缓冲绑定和几何捕获次数")
+        define("static_gun_render_diagnostics", false)
+    }
+
+    @JvmField
     val LENS_ZOOM_RATIO = buildClientConfig {
         comment("Share of the scope zoom handled inside the lens instead of the world FOV. 0 = all zoom from the world FOV, 1 = the world FOV stays untouched and the lens does all the work")
         comment("开镜倍率中由镜内放大承担的比例。0 = 完全由世界 FOV 放大，1 = 世界视野不变、全部由镜片放大")
@@ -89,6 +110,20 @@ object DisplayConfig {
         comment("Set true to show ammo and gun info on HUD")
         comment("是否开启枪械和弹药HUD")
         define("ammo_hud", true)
+    }
+
+    @JvmField
+    val MAX_DISPLAYED_RESERVE_AMMO = buildClientConfig {
+        comment("Maximum reserve or backpack ammo count shown on the weapon HUD. Counts above the limit are shown with a + suffix. Set to 0 to disable the limit")
+        comment("武器 HUD 上备弹数或背包弹药数的显示上限。超过上限时显示上限值加 +，设为 0 则不限制")
+        defineInRange("max_displayed_reserve_ammo", 99999, 0, Int.MAX_VALUE)
+    }
+
+    @JvmField
+    val PERK_HUD = buildClientConfig {
+        comment("Show active weapon perks, remaining durations and stacks on HUD")
+        comment("显示当前武器的模组状态、剩余时间和层数HUD")
+        define("perk_hud", true)
     }
 
     @JvmField
@@ -183,6 +218,13 @@ object DisplayConfig {
     }
 
     @JvmField
+    val FLASHBANG_DARK_MODE = buildClientConfig {
+        comment("Replace flashbang whiteout with blackout, with the same duration and fade")
+        comment("防光敏性癫痫：将闪光弹的闪白替换为黑色，保持相同的持续时间和渐退效果")
+        define("flashbang_dark_mode", false)
+    }
+
+    @JvmField
     val ENABLE_VERSION_CHECK_WARNING = buildClientConfig {
         comment("Set true to enable version check warning when version of this mod has been changed")
         comment("是否启用版本检查警告")
@@ -194,6 +236,20 @@ object DisplayConfig {
         comment("Set true to enable flashlights when firing")
         comment("是否启用开火时照明效果")
         define("enable_fire_flash_light", true)
+    }
+
+    @JvmField
+    val MUZZLE_LIGHT_LIMIT = buildClientConfig {
+        comment("Maximum simultaneous gun muzzle shader lights; nearest sources and the local player have priority")
+        comment("枪口 shader 光源数量上限，优先保留本地玩家与近处光源")
+        defineInRange("muzzle_light_limit", 16, 1, 32)
+    }
+
+    @JvmField
+    val MUZZLE_LIGHT_STRENGTH = buildClientConfig {
+        comment("Intensity multiplier for gun muzzle environment and first-person lighting")
+        comment("枪口环境照明与第一人称补光的强度倍率")
+        defineInRange("muzzle_light_strength", 1.0, 0.0, 2.0)
     }
 
     @JvmField

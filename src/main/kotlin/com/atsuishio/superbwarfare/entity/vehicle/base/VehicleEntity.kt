@@ -40,6 +40,7 @@ import com.atsuishio.superbwarfare.entity.vehicle.utils.VehicleEngineUtils.aircr
 import com.atsuishio.superbwarfare.entity.vehicle.utils.VehicleVecUtils.getXRotFromVector
 import com.atsuishio.superbwarfare.entity.vehicle.utils.VehicleVecUtils.getYRotFromVector
 import com.atsuishio.superbwarfare.entity.vehicle.utils.VehicleWeaponUtils.reloadDecoy
+import com.atsuishio.superbwarfare.event.ClientEventHandler
 import com.atsuishio.superbwarfare.event.ClientMouseHandler
 import com.atsuishio.superbwarfare.event.GunEventHandler
 import com.atsuishio.superbwarfare.init.*
@@ -587,6 +588,33 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
     open var mouseMoveSpeedX by MOUSE_SPEED_X
     open var mouseMoveSpeedY by MOUSE_SPEED_Y
 
+    private var directTurretYawInput = 0f
+    private var directTurretPitchInput = 0f
+    private val directAimDir = Vector3d(0.0, 0.0, 1.0)
+    private val directAimUp = Vector3d(0.0, 1.0, 0.0)
+    private var directAimInitialized = false
+    private var serverDirectTurretController: Player? = null
+    private var pendingTurretRequest: TurretControlRequest? = null
+    private var clientShotAim: ClientShotAim? = null
+
+    private data class TurretControlRequest(val controller: Player, val directAngles: Vec2?)
+    private data class ClientShotAim(val controller: Player, val gunData: GunData, val direction: Vec3)
+
+    open fun addDirectTurretInput(yawDeg: Float, pitchDeg: Float) {
+        directTurretYawInput += yawDeg
+        directTurretPitchInput += pitchDeg
+    }
+
+    private fun hasControllableTurret(): Boolean = hasTurret() && barrelPosition != null && !isWreck
+
+    fun isDirectTurretController(player: Player): Boolean =
+        hasControllableTurret() && getNthEntity(turretControllerIndex) === player
+
+    fun queueTurretControl(player: Player, direct: Boolean, yRot: Float, xRot: Float) {
+        if (!isDirectTurretController(player) || (direct && (!yRot.isFinite() || !xRot.isFinite()))) return
+        pendingTurretRequest = TurretControlRequest(player, if (direct) Vec2(yRot, xRot) else null)
+    }
+
     open var locked by LOCKED
 
     // container start
@@ -1015,6 +1043,9 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
             define(DELTA_ROT, 0f)
             define(MOUSE_SPEED_X, 0f)
             define(MOUSE_SPEED_Y, 0f)
+            define(SYNCHED_TURRET_Y_ROT, 0f)
+            define(SYNCHED_TURRET_X_ROT, 0f)
+            define(DIRECT_TURRET_ACTIVE, false)
 
             define(TURRET_HEALTH, getTurretMaxHealth())
             define(L_WHEEL_HEALTH, getLeftWheelMaxHealth())
@@ -1221,13 +1252,40 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
         return gunData.shootAnimationTimer.get()
     }
 
+    internal fun withClientShotDirection(player: Player, direction: Vec3?, shoot: () -> Unit) {
+        val previous = clientShotAim
+        clientShotAim = if (direction != null && player.vehicle === this && isDirectTurretController(player) &&
+            direction.lengthSqr() in 0.25..4.0
+        ) {
+            getGunData(player)?.let { ClientShotAim(player, it, direction.normalize()) }
+        } else {
+            null
+        }
+        try {
+            shoot()
+        } finally {
+            clientShotAim = previous
+        }
+    }
+
+    private fun clientDirectionForShot(living: LivingEntity?, gunData: GunData, serverDirection: () -> Vec3): Vec3? {
+        val aim = clientShotAim ?: return null
+        if (aim.controller !== living || aim.gunData !== gunData) return null
+
+        // 允许渲染插值和车身惯性带来的小幅误差，服务端炮管方向仍是基准。
+        val tolerance = (5.0 + 2.0 * hypot(turretTurnYSpeed.toDouble(), turretTurnXSpeed.toDouble())).coerceAtMost(30.0)
+        val alignment = aim.direction.dot(serverDirection().normalize())
+        return aim.direction.takeIf { alignment >= cos(Math.toRadians(tolerance)) }
+    }
+
     open fun vehicleShoot(living: LivingEntity?, weaponName: String, targetPos: Vec3?) {
         if (isWreck) return
         if (this.level().isClientSide) return
 
-        val gunData = getGunData(weaponName)
+        val gunData = getGunData(weaponName) ?: return
+        val clientDirection = clientDirectionForShot(living, gunData) { getShootVec(weaponName, 1f) }
 
-        queueServerWork(gunData!!.get(GunProp.SHOOT_DELAY_TIME)) {
+        queueServerWork(gunData.get(GunProp.SHOOT_DELAY_TIME)) {
             modifyGunData(weaponName) { data ->
                 if (!data.canShoot(this.ammoSupplier)) return@modifyGunData
                 data.shoot(
@@ -1236,7 +1294,7 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
                         living,
                         this.level() as ServerLevel,
                         getShootPos(weaponName, 1f),
-                        getShootVec(weaponName, 1f),
+                        clientDirection ?: getShootVec(weaponName, 1f),
                         data,
                         data.get(GunProp.SPREAD),
                         true,
@@ -1247,7 +1305,7 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
             }
         }
 
-        afterShoot(gunData, getShootVec(weaponName, 1f))
+        afterShoot(gunData, clientDirection ?: getShootVec(weaponName, 1f))
         playShootSound3p(living, weaponName)
 
         if (living != null) {
@@ -1275,15 +1333,16 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
     /** 按武器名发射，同时支持锁定实体 UUID 和指定目标位置 */
     open fun vehicleShoot(living: LivingEntity?, weaponName: String, uuid: UUID?, targetPos: Vec3?) {
         if (isWreck) return
-        val gunData = getGunData(weaponName)
+        val gunData = getGunData(weaponName) ?: return
+        val clientDirection = clientDirectionForShot(living, gunData) { getShootVec(weaponName, 1f) }
 
-        queueServerWork(gunData!!.get(GunProp.SHOOT_DELAY_TIME)) {
+        queueServerWork(gunData.get(GunProp.SHOOT_DELAY_TIME)) {
             modifyGunData(weaponName) { data ->
                 if (!data.canShoot(this.ammoSupplier)) return@modifyGunData
                 data.shoot(
                     ShootParameters(
                         this.ammoSupplier, living, this.level() as ServerLevel,
-                        getShootPos(weaponName, 1f), getShootVec(weaponName, 1f),
+                        getShootPos(weaponName, 1f), clientDirection ?: getShootVec(weaponName, 1f),
                         data, data.get(GunProp.SPREAD), true,
                         uuid, targetPos
                     )
@@ -1291,7 +1350,7 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
             }
         }
 
-        afterShoot(gunData, getShootVec(weaponName, 1f))
+        afterShoot(gunData, clientDirection ?: getShootVec(weaponName, 1f))
         playShootSound3p(living, weaponName)
 
         if (living != null) {
@@ -1311,18 +1370,20 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
         if (isWreck) return
         val seatIndex = getSeatIndex(living)
 
-        val gunData = getGunData(seatIndex)
+        val gunData = getGunData(seatIndex) ?: return
+        val clientDirection = clientDirectionForShot(living, gunData) { getShootVec(living, 1f) }
 
-        queueServerWork(gunData!!.get(GunProp.SHOOT_DELAY_TIME)) {
+        queueServerWork(gunData.get(GunProp.SHOOT_DELAY_TIME)) {
             modifyGunData(seatIndex) { data ->
                 if (!data.canShoot(this.ammoSupplier)) return@modifyGunData
+                val shotDirection = clientDirection.takeIf { data === gunData } ?: getShootVec(living, 1f)
                 data.shoot(
                     ShootParameters(
                         this.ammoSupplier,
                         living,
                         this.level() as ServerLevel,
                         getShootPos(living, 1f),
-                        getShootVec(living, 1f),
+                        shotDirection,
                         data,
                         data.get(GunProp.SPREAD),
                         true,
@@ -1333,7 +1394,7 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
             }
         }
 
-        afterShoot(gunData, getShootVec(living, 1f))
+        afterShoot(gunData, clientDirection ?: getShootVec(living, 1f))
         playShootSound3p(living, seatIndex)
 
         if (living != null) {
@@ -2602,19 +2663,7 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
         mouseMoveSpeedX *= 0.95f
         mouseMoveSpeedY *= 0.95f
 
-        if (hasTurret()) {
-            val turretController = getNthEntity(this.turretControllerIndex)
-            if (turretController is Player) {
-                this.adjustTurretAngle()
-            } else if (turretController is Mob) {
-                this.turretAutoAimFromUuid(aiTurretTargetUUID, turretController)
-            }
-
-            if (turretController == null) {
-                turretYRotLock = 0f
-            }
-        }
-
+        tickTurret()
         if (hasPassengerWeaponStation()) {
             val passengerWeaponStationController = getNthEntity(this.passengerWeaponStationControllerIndex)
             if (passengerWeaponStationController is Player || passengerWeaponStationController == null) {
@@ -3216,6 +3265,243 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
         VehicleWeaponUtils.adjustTurretAngle(this)
     }
 
+    private fun tickTurret() {
+        val request = pendingTurretRequest
+        pendingTurretRequest = null
+        val controller = if (hasTurret()) getNthEntity(turretControllerIndex) else null
+
+        if (controller is Player && hasControllableTurret()) {
+            if (level().isClientSide) {
+                tickClientTurret(controller)
+            } else {
+                if (serverDirectTurretController !== controller) serverDirectTurretController = null
+                if (request?.controller === controller) {
+                    serverDirectTurretController = if (request.directAngles != null) controller else null
+                    request.directAngles?.let(::applyDirectTurretAngles)
+                }
+                if (serverDirectTurretController == null) VehicleWeaponUtils.followTurretView(this, controller)
+                synchedDirectTurretActive = serverDirectTurretController != null
+                synchedTurretYRot = turretYRot
+                synchedTurretXRot = turretXRot
+            }
+            turretYRotLock = Mth.wrapDegrees(turretYRot - turretYRotO)
+            return
+        }
+
+        clearDirectTurretInput()
+        if (!level().isClientSide) {
+            serverDirectTurretController = null
+            synchedDirectTurretActive = false
+        }
+        when (controller) {
+            is Player -> adjustTurretAngle()
+            is Mob -> turretAutoAimFromUuid(aiTurretTargetUUID, controller)
+            null -> turretYRotLock = 0f
+        }
+    }
+
+    @OnlyIn(Dist.CLIENT)
+    private fun tickClientTurret(controller: Player) {
+        val localController = controller === mc.player
+        if (localController && ClientMouseHandler.isDirectTurretMode()) {
+            applyDirectTurretInput()
+            return
+        }
+
+        if (localController && directAimInitialized) {
+            // 切回第三人称时以炮管方向接续视线。
+            val barrel = getBarrelVector(1f).normalize()
+            if (barrel.lengthSqr() > 0.0) {
+                controller.yRot = Math.toDegrees(atan2(-barrel.x, barrel.z)).toFloat()
+                controller.yRotO = controller.yRot
+                controller.xRot = Math.toDegrees(-asin(barrel.y.coerceIn(-1.0, 1.0))).toFloat()
+                controller.xRotO = controller.xRot
+            }
+        }
+        clearDirectTurretInput()
+
+        if (!localController && synchedDirectTurretActive) {
+            turretYRot = turretYRotO + Mth.wrapDegrees(synchedTurretYRot - turretYRotO)
+            turretXRot = synchedTurretXRot
+            turretTurnSound(turretXRot - turretXRotO, turretYRot - turretYRotO, 0.95f)
+        } else {
+            if (localController) {
+                controller.xRot = VehicleWeaponUtils.clampTurretViewPitch(controller.xRot)
+                controller.xRotO = VehicleWeaponUtils.clampTurretViewPitch(controller.xRotO)
+            }
+            VehicleWeaponUtils.followTurretView(this, controller)
+        }
+    }
+
+    private fun clearDirectTurretInput() {
+        directAimInitialized = false
+        directTurretYawInput = 0f
+        directTurretPitchInput = 0f
+    }
+
+    private fun applyDirectTurretInput() {
+        val inputYaw = directTurretYawInput
+        val inputPitch = directTurretPitchInput
+        directTurretYawInput = 0f
+        directTurretPitchInput = 0f
+
+        if (isWreck) return
+
+        val hullRot = Matrix4d(getVehicleTransformWithCustomPitch(1f))
+        hullRot.setTranslation(0.0, 0.0, 0.0)
+        val invHull = Matrix4d(hullRot).invert()
+        val hullUp = hullRot.transformDirection(Vector3d(0.0, 1.0, 0.0)).normalize()
+
+        if (!directAimInitialized) {
+            val barrelVec = getBarrelVector(1f)
+            if (barrelVec.lengthSqr() > 1e-6) {
+                directAimDir.set(barrelVec.x, barrelVec.y, barrelVec.z).normalize()
+            } else {
+                directAimDir.set(0.0, 0.0, 1.0)
+            }
+            directAimUp.set(hullUp)
+            orthogonalizeDirectAimUp(hullRot)
+            directAimInitialized = true
+        }
+
+        if (inputYaw != 0f) {
+            val yaw = -Math.toRadians(inputYaw.toDouble())
+            directAimDir.rotateAxis(yaw, hullUp.x, hullUp.y, hullUp.z)
+            directAimUp.rotateAxis(yaw, hullUp.x, hullUp.y, hullUp.z)
+        }
+        if (inputPitch != 0f) {
+            val localAim = invHull.transformDirection(Vector3d(directAimDir))
+            val currentLocalPitch = Math.toDegrees(asin((-localAim.y).coerceIn(-1.0, 1.0))).toFloat()
+            val minPitch = -turretMaxPitch + customTurretMaxPitch
+            val maxPitch = -turretMinPitch - customTurretMinPitch
+            val deltaPitch = Mth.clamp(inputPitch, minPitch - currentLocalPitch, maxPitch - currentLocalPitch)
+            if (deltaPitch != 0f) {
+                val axis = Vector3d(directAimUp).cross(directAimDir).normalize()
+                val pitch = Math.toRadians(deltaPitch.toDouble())
+                directAimDir.rotateAxis(pitch, axis.x, axis.y, axis.z)
+                directAimUp.rotateAxis(pitch, axis.x, axis.y, axis.z)
+            }
+        }
+        directAimDir.normalize()
+        orthogonalizeDirectAimUp(hullRot)
+
+        val local = invHull.transformDirection(Vector3d(directAimDir))
+
+        val hasHorizontalAim = local.x * local.x + local.z * local.z > 1.0E-8
+        val damageScale = if (entityData.get(TURRET_DAMAGED)) 0.2f else 1f
+        val prevYRot = turretYRot
+        val prevXRot = turretXRot
+
+        val requestedYaw = if (hasHorizontalAim) {
+            val localYaw = Math.toDegrees(atan2(local.x, local.z)).toFloat()
+            turretYRot + Mth.wrapDegrees(localYaw - turretYRot)
+        } else {
+            turretYRot - inputYaw
+        }
+        val (minYaw, maxYaw) = effectiveTurretYawRange()
+        val targetYaw = Mth.clamp(requestedYaw, minYaw, maxYaw)
+        val rawTargetPitch = Math.toDegrees(Math.asin((-local.y).coerceIn(-1.0, 1.0))).toFloat()
+        val targetPitch = Mth.clamp(
+            rawTargetPitch,
+            -turretMaxPitch + customTurretMaxPitch,
+            -turretMinPitch - customTurretMinPitch
+        )
+        // 按原有的最大偏航/俯仰速度限幅追随目标
+        if (turretTurnYSpeed > 0f) {
+            turretYRot += Mth.clamp(
+                targetYaw - turretYRot,
+                -turretTurnYSpeed * damageScale,
+                turretTurnYSpeed * damageScale
+            )
+        }
+        if (turretTurnXSpeed > 0f) {
+            turretXRot += Mth.clamp(
+                targetPitch - turretXRot,
+                -turretTurnXSpeed * damageScale,
+                turretTurnXSpeed * damageScale
+            )
+        }
+        clampTurretAngles()
+        if (hasHorizontalAim && (targetYaw != requestedYaw || targetPitch != rawTargetPitch)) {
+            val tyRad = Math.toRadians(targetYaw.toDouble())
+            val txRad = Math.toRadians(targetPitch.toDouble())
+            val localDir = Vector3d(
+                Math.sin(tyRad) * Math.cos(txRad),
+                -Math.sin(txRad),
+                Math.cos(tyRad) * Math.cos(txRad)
+            )
+            hullRot.transformDirection(localDir, directAimDir)
+            directAimDir.normalize()
+            orthogonalizeDirectAimUp(hullRot)
+        }
+
+        if (turretYRot != prevYRot || turretXRot != prevXRot) {
+            turretTurnSound(turretXRot - prevXRot, turretYRot - prevYRot, 0.95f)
+        }
+    }
+
+    private fun orthogonalizeDirectAimUp(hullRot: Matrix4d) {
+        directAimUp.fma(-directAimUp.dot(directAimDir), directAimDir)
+        if (directAimUp.lengthSquared() < 1.0E-8) {
+            val yaw = Math.toRadians(turretYRot.toDouble())
+            val right = hullRot.transformDirection(Vector3d(cos(yaw), 0.0, -sin(yaw)))
+            directAimUp.set(directAimDir).cross(right)
+            if (directAimUp.lengthSquared() < 1.0E-8) {
+                if (abs(directAimDir.y) < 0.9) directAimUp.set(0.0, 1.0, 0.0)
+                else directAimUp.set(1.0, 0.0, 0.0)
+                directAimUp.fma(-directAimUp.dot(directAimDir), directAimDir)
+            }
+        }
+        directAimUp.normalize()
+    }
+
+    private fun applyDirectTurretAngles(angles: Vec2) {
+        if (isWreck) return
+
+        // 每个服务器刻应用一次角度，保留炮塔转速和受损时的限制。
+        val damageScale = if (entityData.get(TURRET_DAMAGED)) 0.2f else 1f
+        if (turretTurnYSpeed > 0f) {
+            val step = turretTurnYSpeed * damageScale
+            val target = Mth.wrapDegrees(angles.x - turretYRot) + turretYRot
+            val (minYaw, maxYaw) = effectiveTurretYawRange()
+            val limitedTarget = Mth.clamp(target, minYaw, maxYaw)
+            turretYRot += Mth.clamp(limitedTarget - turretYRot, -step, step)
+        }
+        if (turretTurnXSpeed > 0f) {
+            val step = turretTurnXSpeed * damageScale
+            turretXRot += Mth.clamp(angles.y - turretXRot, -step, step)
+        }
+        this.clampTurretAngles()
+    }
+
+    private fun clampTurretAngles() {
+        turretYRot = Mth.clamp(turretYRot, -turretMaxYaw, -turretMinYaw)
+        turretXRot = Mth.clamp(
+            turretXRot,
+            -turretMaxPitch + customTurretMaxPitch,
+            -turretMinPitch - customTurretMinPitch
+        )
+    }
+
+    internal fun effectiveTurretYawRange(): Pair<Float, Float> {
+        val minYaw = -turretMaxYaw
+        val maxYaw = -turretMinYaw
+        val seat = getSeat(turretControllerIndex) ?: return minYaw to maxYaw
+        if ((seat.minYaw <= -514f && seat.maxYaw >= 514f) ||
+            (seat.transform != "Vehicle" && seat.transform != "VehicleFlat")
+        ) return minYaw to maxYaw
+
+        val controller = getNthEntity(turretControllerIndex) ?: return minYaw to maxYaw
+        val center = getTransformDirection(1f, controller)
+        val local = getVehicleTransformWithCustomPitch(1f).invert().transformDirection(Vector3d(center.x, center.y, center.z))
+        if (local.x * local.x + local.z * local.z <= 1.0E-8) return minYaw to maxYaw
+        val centerYaw = Math.toDegrees(atan2(local.x, local.z)).toFloat()
+        val turn = 360f * Math.round((turretYRot - centerYaw) / 360f)
+        val low = maxOf(minYaw, centerYaw - seat.maxYaw + turn)
+        val high = minOf(maxYaw, centerYaw - seat.minYaw + turn)
+        return if (low <= high) low to high else minYaw to maxYaw
+    }
+
     open fun getSelectedWeapon(seatIndex: Int) =
         selectedWeapon.getOrElse(seatIndex) { -1 }
 
@@ -3424,7 +3710,15 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
     open fun getVectorFromString(string: String, ticks: Float, seatIndex: Int): Vec3 {
         val entity = getNthEntity(seatIndex)
         return when (string) {
-            "Bomb" -> bombHitPos(getNthEntity(seatIndex)).subtract(getShootPosForHud(getNthEntity(seatIndex), 1f))
+            "Bomb" -> {
+                val cached = if (level().isClientSide && entity is Player) {
+                    ClientEventHandler.cachedBombHitPos(this, entity, ticks)
+                } else {
+                    null
+                }
+                val origin = getShootPosForHud(entity, if (cached == null) 1f else ticks)
+                origin.vectorTo(cached ?: bombHitPos(entity)).normalize()
+            }
             "Passenger" -> if (entity != null) entity.getViewVector(ticks) else getViewVector(ticks)
             "ClientCamera" -> if (entity != null && entity.level().isClientSide) cameraDirection() else getViewVector(
                 ticks
@@ -4804,6 +5098,9 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
     open var planeBreak by PLANE_BREAK
     open var synchedGearRot by SYNCHED_GEAR_ROT
     open var gearUp by GEAR_UP
+    open var synchedTurretYRot by SYNCHED_TURRET_Y_ROT
+    open var synchedTurretXRot by SYNCHED_TURRET_X_ROT
+    private var synchedDirectTurretActive by DIRECT_TURRET_ACTIVE
 
     open var subEngineDamaged by SUB_ENGINE_DAMAGED
     open var subEngineHealth by SUB_ENGINE_HEALTH
@@ -5113,6 +5410,14 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
             SynchedEntityData.defineId(VehicleEntity::class.java, EntityDataSerializers.FLOAT)
 
         @JvmField
+        val SYNCHED_TURRET_Y_ROT: EntityDataAccessor<Float> =
+            SynchedEntityData.defineId(VehicleEntity::class.java, EntityDataSerializers.FLOAT)
+
+        @JvmField
+        val SYNCHED_TURRET_X_ROT: EntityDataAccessor<Float> =
+            SynchedEntityData.defineId(VehicleEntity::class.java, EntityDataSerializers.FLOAT)
+
+        @JvmField
         @ExcludeBvrSync("SelectedWeapon")
         val SELECTED_WEAPON: EntityDataAccessor<List<Int>> = SynchedEntityData.defineId(
             VehicleEntity::class.java, ModSerializers.INT_LIST_SERIALIZER.get()
@@ -5371,6 +5676,10 @@ open class VehicleEntity(pEntityType: EntityType<*>, pLevel: Level) : Entity(pEn
         @JvmField
         val LIFT_OFFSET: EntityDataAccessor<Float> =
             SynchedEntityData.defineId(VehicleEntity::class.java, EntityDataSerializers.FLOAT)
+
+        @JvmField
+        val DIRECT_TURRET_ACTIVE: EntityDataAccessor<Boolean> =
+            SynchedEntityData.defineId(VehicleEntity::class.java, EntityDataSerializers.BOOLEAN)
 
         init {
             // 注册超视距同步排除：扫描 @ExcludeBvrSync 注解标记的 EntityDataAccessor 字段

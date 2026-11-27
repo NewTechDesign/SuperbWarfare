@@ -1,5 +1,5 @@
 {
-  "Spread": 0,
+  "Spread": 2,
   "RecoilX": 0.0025,
   "RecoilY": 0.032,
   "Damage": 18,
@@ -38,7 +38,7 @@
     {
       "Mode": "Charge",
       "Charge": {
-        "Duration": 2,
+        "Duration": 3,
         "Trigger": "AutoAtFull",
         "PowerMode": "Full",
         "MinPower": 1.0
@@ -49,70 +49,35 @@
   "Icon": "superbwarfare:textures/gun_icon/trachelium_icon.png",
   "AvailableAttachments": {
     "Scope": [
-      "superbwarfare:scope_raiser",
-      "superbwarfare:scope_handgun_red_dot",
-      "superbwarfare:scope_coyote",
-      "superbwarfare:scope_aimpoint_t2",
-      "superbwarfare:scope_eotech_551",
-      "superbwarfare:scope_drs_th",
-      "superbwarfare:scope_okp_7",
-      "superbwarfare:scope_pkas",
-      "superbwarfare:scope_bruiser",
-      "superbwarfare:scope_ranger",
-      "superbwarfare:scope_1p_78",
-      "superbwarfare:scope_pk_a",
-      "superbwarfare:scope_acog",
-      "superbwarfare:scope_qmk171",
-      "superbwarfare:scope_hamr",
-      "superbwarfare:scope_elcan_4x",
-      "superbwarfare:scope_lpvo",
-      "superbwarfare:scope_sniper",
-      "superbwarfare:scope_hanyang_88_re_standard",
-      "superbwarfare:scope_winefox",
-      "superbwarfare:scope_spyglass",
-      "superbwarfare:steel_pipe_scope"
+      "#superbwarfare:attachment/scope/picatinny",
+      "superbwarfare:scope_handgun_red_dot"
     ],
     "Grip": [
-      "superbwarfare:vertical_grip",
-      "superbwarfare:grip_vertical_pineapple",
-      "superbwarfare:grip_vertical_bipod",
-      "superbwarfare:grip_rectangle_vertical",
-      "superbwarfare:triangle_grip",
-      "superbwarfare:steel_pipe_grip",
-      "superbwarfare:grip_cqr_gen2"
+      "#superbwarfare:attachment/grip/standard"
     ],
     "Stock": [
       "superbwarfare:oem_stock_heavy"
     ],
     "Muzzle": [
-      "superbwarfare:meowlencer",
-      "superbwarfare:hissilencer",
-      "superbwarfare:silaowuncer",
-      "superbwarfare:loudspeaker",
+      "#superbwarfare:attachment/muzzle/standard",
       "superbwarfare:handgun_silencer",
-      "superbwarfare:osprey_silencer",
-      "superbwarfare:steel_pipe_silencer",
-      "superbwarfare:milencer"
+      "superbwarfare:osprey_silencer"
     ],
     "Charm": [
       "#superbwarfare:attachment/charm"
     ],
     "LowerRail": [
-      "superbwarfare:lower_rail_bipod",
-      "superbwarfare:peq_15",
-      "superbwarfare:pistol_laser",
+      "#superbwarfare:attachment/lower_rail/standard",
       "superbwarfare:handgun_shield"
     ],
     "UpperRail": [
-      "superbwarfare:peq_15",
-      "superbwarfare:pistol_laser",
-      "superbwarfare:hyperion_shield_module",
-      "superbwarfare:standard_gun_shield"
+      "#superbwarfare:attachment/upper_rail/standard"
     ]
   },
   "AvailablePerks": [
-    "superbwarfare:striving_for_perfection",
     "@Ammo",
+    "superbwarfare:practice_makes_perfect",
+    "superbwarfare:striving_for_perfection",
     "superbwarfare:heal_clip",
     "superbwarfare:field_doctor",
     "superbwarfare:fourth_times_charm",
@@ -130,16 +95,18 @@
     "superbwarfare:brain_storm",
     "superbwarfare:battle_of_wits",
     "superbwarfare:target_lock",
-    "!superbwarfare:micro_missile",
-    "!superbwarfare:longer_wire",
-    "!superbwarfare:cupid_arrow",
-    "!superbwarfare:cluster_bomb",
     "superbwarfare:quickdraw",
     "superbwarfare:adrenaline_rush",
     "superbwarfare:snapshot_sights",
     "superbwarfare:triple_tap",
     "superbwarfare:soul_reaver",
-    "superbwarfare:steady_resolve"
+    "superbwarfare:steady_resolve",
+    "!superbwarfare:arrsow_discord",
+    "!superbwarfare:chain_lightning",
+    "!superbwarfare:micro_missile",
+    "!superbwarfare:longer_wire",
+    "!superbwarfare:cupid_arrow",
+    "!superbwarfare:cluster_bomb"
   ],
   "HandGuard": {
     "Grip": true,

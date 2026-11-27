@@ -1,7 +1,12 @@
 package com.atsuishio.superbwarfare.mixins;
 
+import com.atsuishio.superbwarfare.client.camera.VehicleBoneCamera;
+import com.atsuishio.superbwarfare.client.lighting.GunMuzzleLightRenderer;
+import com.atsuishio.superbwarfare.client.overlay.FlashbangOverlay;
 import com.atsuishio.superbwarfare.client.renderer.scope.ScopeLensPostProcessor;
 import com.atsuishio.superbwarfare.client.renderer.scope.ScopeThermalRenderer;
+import com.atsuishio.superbwarfare.client.renderer.special.NuclearExplosionRenderer;
+import com.atsuishio.superbwarfare.compat.shader.ShaderCompat;
 import com.atsuishio.superbwarfare.config.client.DisplayConfig;
 import com.atsuishio.superbwarfare.data.vehicle.VehicleData;
 import com.atsuishio.superbwarfare.entity.vehicle.base.VehicleEntity;
@@ -38,21 +43,29 @@ public abstract class GameRendererMixin {
 
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void superbWarfare$beginScopeFrame(DeltaTracker deltaTracker, CallbackInfo ci) {
+        GunMuzzleLightRenderer.beginFrame();
         ScopeLensPostProcessor.beginFrame();
         ScopeThermalRenderer.beginFrame();
+        VehicleBoneCamera.clearFrame();
     }
 
     // Iris has completed its composite at this point; its final colour-space conversion is later.
-    @Inject(method = "renderLevel", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/profiling/ProfilerFiller;popPush(Ljava/lang/String;)V", ordinal = 2))
+    @Inject(method = "renderLevel", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;ZLnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/GameRenderer;Lnet/minecraft/client/renderer/LightTexture;Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;)V",
+            shift = At.Shift.AFTER))
     private void superbWarfare$renderScopeLenses(DeltaTracker deltaTracker, CallbackInfo ci) {
+        NuclearExplosionRenderer.render(deltaTracker.getGameTimeDeltaPartialTick(true));
         ScopeThermalRenderer.captureWorldDepth();
+        if (ShaderCompat.isShaderPackActive()) ScopeThermalRenderer.renderFullScreen();
         ScopeLensPostProcessor.render();
     }
 
     // Vanilla renders hands after the world; Iris renders them before its composite.
     @Inject(method = "renderLevel", at = @At("RETURN"))
     private void superbWarfare$renderVanillaThermalScopes(DeltaTracker deltaTracker, CallbackInfo ci) {
+        if (!ShaderCompat.isShaderPackActive()) ScopeThermalRenderer.renderFullScreen();
         ScopeLensPostProcessor.render();
+        FlashbangOverlay.finishWorldFrame(deltaTracker.getGameTimeDeltaPartialTick(true));
     }
 
     @Inject(method = "bobView(Lcom/mojang/blaze3d/vertex/PoseStack;F)V", at = @At("HEAD"), cancellable = true)
@@ -77,6 +90,7 @@ public abstract class GameRendererMixin {
     public void superbWarfare$renderWorld(PoseStack matrices, float tickDelta, CallbackInfo ci) {
         // Reset pushed stack from previous frame in case hand event didn't fire
         ClientEventHandler.vehiclePoseStack = null;
+        if (VehicleBoneCamera.activeThisFrame) return;
 
         Entity entity = mainCamera.getEntity();
         matrices.mulPose(Axis.ZP.rotationDegrees(ClientEventHandler.cameraRoll));
@@ -147,6 +161,8 @@ public abstract class GameRendererMixin {
             at = @At(value = "INVOKE",
                     target = "Lorg/joml/Matrix4f;rotation(Lorg/joml/Quaternionfc;)Lorg/joml/Matrix4f;"))
     private Matrix4f superbWarfare$applyGunCameraAnimation(Matrix4f viewRotation) {
+        if (VehicleBoneCamera.activeThisFrame) return viewRotation;
+
         Quaternionf rotation = ClientEventHandler.firstPersonCameraRotation();
         if (rotation == null) {
             return viewRotation;

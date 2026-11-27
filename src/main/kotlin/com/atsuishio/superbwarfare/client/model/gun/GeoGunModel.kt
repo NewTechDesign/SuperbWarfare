@@ -4,6 +4,7 @@ import com.atsuishio.superbwarfare.client.renderer.ModRenderTypes
 import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoDisplayRenderer
 import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoReadout
 import com.atsuishio.superbwarfare.client.renderer.gun.GunEmissiveTextures
+import com.atsuishio.superbwarfare.client.renderer.gun.StaticGunRenderer
 import com.atsuishio.superbwarfare.client.renderer.scope.BuiltinGunScopeRenderer
 import com.atsuishio.superbwarfare.resource.ModelResource
 import com.atsuishio.superbwarfare.resource.model.GunLODModelReloadListener
@@ -100,6 +101,7 @@ open class GeoGunModel @JvmOverloads constructor(
     protected val rightHandBoneIndex: Int = baseModel.getIndex(RIGHT_HAND_BONE)
 
     protected val bindGlobalTransformCache = hashMapOf<String, Matrix4f?>()
+    private val bindInstance: TreeModelInstance by lazy { baseModel.createInstance() }
     protected var modelCenterCache: Vector3f? = null
 
     init {
@@ -209,11 +211,7 @@ open class GeoGunModel @JvmOverloads constructor(
         val index = baseModel.getIndex(boneName)
         if (index < 0) return null
 
-        val currentPose = instance.pose
-        instance.resetPose()
-        val transform = Matrix4f(instance.getGlobalTransform(index))
-        instance.applyPose(currentPose)
-        return transform
+        return Matrix4f(bindInstance.getGlobalTransform(index))
     }
 
     open fun getConstraintPath(boneIndex: Int): IntArray {
@@ -241,9 +239,6 @@ open class GeoGunModel @JvmOverloads constructor(
             return modelCenterCache!!
         }
 
-        val currentPose = instance.pose
-        instance.resetPose()
-
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE
         var minZ = Float.MAX_VALUE
@@ -256,7 +251,7 @@ open class GeoGunModel @JvmOverloads constructor(
             val name = bone.name().lowercase(Locale.ENGLISH)
             if (name.contains("view") || name.contains("camera") || name.contains("hand")) continue
 
-            val position = instance.getGlobalTransform(bone.index()).getTranslation(Vector3f())
+            val position = bindInstance.getGlobalTransform(bone.index()).getTranslation(Vector3f())
             minX = minOf(minX, position.x)
             minY = minOf(minY, position.y)
             minZ = minOf(minZ, position.z)
@@ -265,8 +260,6 @@ open class GeoGunModel @JvmOverloads constructor(
             maxZ = maxOf(maxZ, position.z)
             any = true
         }
-
-        instance.applyPose(currentPose)
 
         modelCenterCache = if (any) {
             Vector3f((minX + maxX) / 2f, (minY + maxY) / 2f, (minZ + maxZ) / 2f)
@@ -286,6 +279,7 @@ open class GeoGunModel @JvmOverloads constructor(
         handAnchors: Map<HumanoidArm, Matrix4f> = emptyMap(),
         emissiveTexture: ResourceLocation? = null
     ) {
+        StaticGunRenderer.registerMaterials(bufferSource, texture, readout, emissiveTexture)
         renderToBuffer(
             poseStack,
             bufferSource,

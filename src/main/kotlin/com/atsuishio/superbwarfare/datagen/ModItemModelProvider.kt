@@ -17,6 +17,7 @@ import net.minecraft.world.level.block.Block
 import net.neoforged.neoforge.client.model.generators.ItemModelBuilder
 import net.neoforged.neoforge.client.model.generators.ItemModelProvider
 import net.neoforged.neoforge.client.model.generators.ModelFile
+import net.neoforged.neoforge.client.model.generators.ModelFile.UncheckedModelFile
 import net.neoforged.neoforge.common.data.ExistingFileHelper
 import net.neoforged.neoforge.registries.DeferredHolder
 
@@ -27,6 +28,7 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         // gun
         gunItem(ModItems.AA_12)
         gunItem(ModItems.AK_12)
+        gunItem(ModItems.A_762)
         gunItem(ModItems.AK_47)
         gunItem(ModItems.BOCEK)
         gunItem(ModItems.DEVOTION)
@@ -91,6 +93,7 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         gunItem(ModItems.DIAMOND_HAMMER)
         gunItem(ModItems.CEMENTED_CARBIDE_HAMMER)
         gunItem(ModItems.NETHERITE_HAMMER)
+        gunItem(ModItems.FIRE_AXE)
 
         simpleItem(ModItems.VEHICLE_GUN)
         withExistingParent(ModItems.EMPTY_GUN.id.path, ResourceLocation.withDefaultNamespace("item/generated"))
@@ -141,6 +144,8 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         simpleItem(ModItems.CEMENTED_CARBIDE_INGOT)
         simpleItem(ModItems.URANIUM_INGOT)
         simpleItem(ModItems.RAW_URANIUM)
+        simpleItem(ModItems.YELLOW_CAKE)
+        simpleItem(ModItems.SUSPICIOUS_YELLOW_CAKE)
         simpleItem(ModItems.HIGH_ENERGY_EXPLOSIVES)
         simpleItem(ModItems.GRAIN)
         simpleItem(ModItems.IRON_POWDER)
@@ -309,6 +314,7 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         gunBlueprintItem(ModItems.AWM_BLUEPRINT)
         gunBlueprintItem(ModItems.M_98B_BLUEPRINT)
         gunBlueprintItem(ModItems.AK_12_BLUEPRINT)
+        gunBlueprintItem(ModItems.A_762_BLUEPRINT)
         gunBlueprintItem(ModItems.AK_47_BLUEPRINT)
         gunBlueprintItem(ModItems.DEVOTION_BLUEPRINT)
         gunBlueprintItem(ModItems.TASER_BLUEPRINT)
@@ -407,6 +413,7 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         simpleItem(ModItems.HANDGUN_SHIELD)
         simpleItem(ModItems.HYPERION_SHIELD_MODULE)
         simpleItem(ModItems.PISTOL_LASER)
+        simpleItem(ModItems.SUREFIRE_X400_ULTRA_FLASHLIGHT)
         simpleItem(ModItems.RANGE_FINDER)
         simpleItem(ModItems.BAYONET_M_9)
         simpleItem(ModItems.BAYONET_6KH2)
@@ -436,6 +443,7 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         simpleItem(ModItems.CHARM_PIGLIN_HEAD)
         simpleItem(ModItems.CHARM_CONTAINER)
         simpleItem(ModItems.CHARM_M67_GRENADE)
+        simpleItem(ModItems.CHARM_CAKE)
         simpleItem(ModItems.CHARM_SPIDER_HEAD)
         simpleItem(ModItems.CHARM_WITHER_SKELETON_SKULL)
         simpleItem(ModItems.CHARM_NETHER_STAR)
@@ -446,6 +454,7 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         simpleItem(ModItems.CHARM_SUI_CONTAINER)
         simpleItem(ModItems.CHARM_STARS_IL)
         simpleItem(ModItems.CHARM_MK_82)
+        simpleItem(ModItems.CHARM_GOLDEN_APPLE)
         simpleItem(ModItems.CHARM_ORANGE_PLUSHIE)
         simpleItem(ModItems.CHARM_HAKUREI_REIMU)
         simpleItem(ModItems.CHARM_KIRISAME_MARISA)
@@ -460,6 +469,8 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         simpleItem(ModItems.CHARM_THE_EMPERORS_NEW_CHARM)
         simpleItem(ModItems.CHARM_BEAST)
         simpleItem(ModItems.CHARM_CRYSTAL_POPCORN)
+        simpleItem(ModItems.CHARM_GOLDEN_RINGO_GUN_KING_MEDAL)
+        simpleItem(ModItems.CHARM_BEACON)
         simpleItem(ModItems.CHARM_SENPAI)
         simpleItem(ModItems.CHARM_MRAHC)
         simpleItem(ModItems.CHARM_EXPERIENCE_BOTTLE)
@@ -468,12 +479,30 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         simpleItem(ModItems.CHARM_LILY)
         simpleItem(ModItems.CHARM_HIRU_HEAD)
         simpleItem(ModItems.CHARM_SWISS_COIL)
+        simpleItem(ModItems.CHARM_INSIGNIA_OF_THE_HEART_SEEKER)
+        simpleItem(ModItems.CHARM_COOING_BELL)
+        simpleItem(ModItems.CHARM_TEMPERED_FEATHER)
+        simpleItem(ModItems.CHARM_RADIANT_VOW)
 
         // blocks
         evenSimplerBlockItem(ModBlocks.BARBED_WIRE)
         evenSimplerBlockItem(ModBlocks.JUMP_PAD)
+        evenSimplerBlockItem(ModBlocks.HIGH_ENERGY_EXPLOSIVES_BLOCK)
+        evenSimplerBlockItem(ModBlocks.BOOBY_TRAP)
         evenSimplerBlockItem(ModBlocks.REFORGING_TABLE)
-        getBuilder("resonance_base").parent(ModelFile.UncheckedModelFile(modLoc("displaysettings/resonance_base")))
+        getBuilder("shelf").parent(UncheckedModelFile("builtin/entity"))
+            .guiLight(BlockModel.GuiLight.SIDE)
+            .texture("particle", mcLoc("block/white_concrete"))
+            .transforms()
+            .transform(ItemDisplayContext.GUI).rotation(30f, 225f, 0f).scale(0.625f).end()
+            .transform(ItemDisplayContext.GROUND).translation(0f, 3f, 0f).scale(0.25f).end()
+            .transform(ItemDisplayContext.FIXED).scale(0.5f).end()
+            .transform(ItemDisplayContext.THIRD_PERSON_RIGHT_HAND).rotation(75f, 45f, 0f)
+                .translation(0f, 2.5f, 0f).scale(0.375f).end()
+            .transform(ItemDisplayContext.FIRST_PERSON_RIGHT_HAND).rotation(0f, 45f, 0f).scale(0.4f).end()
+            .transform(ItemDisplayContext.FIRST_PERSON_LEFT_HAND).rotation(0f, 225f, 0f).scale(0.4f).end()
+            .end()
+        getBuilder("resonance_base").parent(UncheckedModelFile(modLoc("displaysettings/resonance_base")))
         evenSimplerBlockItem(ModBlocks.CHARGING_STATION)
         evenSimplerBlockItem(ModBlocks.WEAPON_REPAIR_STATION)
         evenSimplerBlockItem(ModBlocks.CREATIVE_CHARGING_STATION)
@@ -483,6 +512,7 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
         evenSimplerBlockItem(ModBlocks.SUPERB_ITEM_INTERFACE)
         evenSimplerBlockItem(ModBlocks.CREATIVE_SUPERB_ITEM_INTERFACE)
         evenSimplerBlockItem(ModBlocks.BIOGAS_GENERATOR)
+        getBuilder("item_display_board").parent(UncheckedModelFile(modLoc("displaysettings/item_display_board_display_settings")))
         simpleItem(ModItems.FUMO_25)
     }
 
@@ -557,7 +587,7 @@ class ModItemModelProvider(output: PackOutput, existingFileHelper: ExistingFileH
 
     fun gunItem(item: DeferredHolder<Item, out Item>) {
         getBuilder(item.id.path)
-            .parent(ModelFile.UncheckedModelFile("builtin/entity"))
+            .parent(UncheckedModelFile("builtin/entity"))
             .guiLight(BlockModel.GuiLight.FRONT)
     }
 }

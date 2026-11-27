@@ -13,12 +13,15 @@ object ModEntityRenderers {
     fun registerEntityRenderers(event: EntityRenderersEvent.RegisterRenderers) {
         with(event) {
             registerEntityRenderer(ModEntities.REFORGING_LASER.get(), ::ReforgingLaserRenderer)
+            registerEntityRenderer(ModEntities.HIGH_ENERGY_LASER.get(), ::HighEnergyLaserRenderer)
             registerEntityRenderer(ModEntities.REFORGING_GRAVITY_BALL.get(), ::ReforgingGravityBallRenderer)
             registerEntityRenderer(ModEntities.REFORGING_LIGHTNING_BALL.get(), ::ReforgingLightningBallRenderer)
             registerEntityRenderer(ModEntities.MORTAR.get(), ::MortarRenderer)
             registerEntityRenderer(ModEntities.SENPAI.get(), ::SenpaiRenderer)
             registerEntityRenderer(ModEntities.CREEPING_SENPAI.get(), ::CreepingSenpaiRenderer)
+            registerEntityRenderer(ModEntities.HIGH_ENERGY_EXPLOSIVES.get(), ::HighEnergyExplosivesRenderer)
             registerEntityRenderer(ModEntities.CLAYMORE.get(), ::ClaymoreRenderer)
+            registerEntityRenderer(ModEntities.SEA_MINE.get(), ::SeaMineRenderer)
             registerEntityRenderer(ModEntities.C4.get(), ::C4Renderer)
             registerEntityRenderer(ModEntities.TASER_BULLET.get(), ::BasicProjectileRenderer)
             registerEntityRenderer(ModEntities.GUN_GRENADE.get(), ::BasicProjectileRenderer)
@@ -40,6 +43,9 @@ object ModEntityRenderers {
             registerEntityRenderer(ModEntities.TYPE_88_CLUSTER_GRENADES.get(), ::BasicProjectileRenderer)
             registerEntityRenderer(ModEntities.SPLIT_TYPE_88_GRENADE.get(), ::BasicProjectileRenderer)
             registerEntityRenderer(ModEntities.M18_SMOKE_GRENADE.get(), ::BasicProjectileRenderer)
+            registerEntityRenderer(ModEntities.M84_STUN_GRENADE.get(), ::BasicProjectileRenderer)
+            registerEntityRenderer(ModEntities.DECOY_GRENADE.get(), ::BasicProjectileRenderer)
+            registerEntityRenderer(ModEntities.MOLOTOV.get(), ::BasicProjectileRenderer)
             registerEntityRenderer(ModEntities.MLE_1934.get(), ::Mle1934Renderer)
             registerEntityRenderer(ModEntities.JAVELIN_MISSILE.get(), ::BasicProjectileRenderer)
             registerEntityRenderer(ModEntities.ANNIHILATOR.get(), ::AnnihilatorRenderer)
@@ -115,6 +121,13 @@ object ModEntityRenderers {
             registerEntityRenderer(ModEntities.AC_130H.get(), ::Ac130hRenderer)
             registerEntityRenderer(ModEntities.J_16.get(), ::J16Renderer)
             registerEntityRenderer(ModEntities.FIM_92_MISSILE.get(), ::BasicProjectileRenderer)
+            registerEntityRenderer(ModEntities.FOOD_RAIN_ATOM_BOMB.get()) {
+                BasicProjectileRenderer(it, modelScale = 2f)
+            }
+            registerEntityRenderer(ModEntities.FOOD_RAIN_ITEM.get(), ::FoodRainItemRenderer)
+            registerEntityRenderer(ModEntities.SMELLY_BOY.get()) {
+                BasicProjectileRenderer(it, modelScale = 2f)
+            }
         }
     }
 }

@@ -36,6 +36,8 @@ object ModBlocks {
     @JvmField val SANDBAG = registerBlock("sandbag") { Block(BlockBehaviour.Properties.of().instrument(NoteBlockInstrument.SNARE).sound(SoundType.SAND).strength(10f, 20f)) }
     @JvmField val BARBED_WIRE = registerBlock("barbed_wire") { BarbedWireBlock() }
     @JvmField val JUMP_PAD = registerBlock("jump_pad") { JumpPadBlock() }
+    @JvmField val HIGH_ENERGY_EXPLOSIVES_BLOCK = registerBlock("high_energy_explosives_block") { HighEnergyExplosivesBlock() }
+    @JvmField val BOOBY_TRAP = registerBlock("booby_trap") { BoobyTrapBlock() }
     @JvmField val DRAGON_TEETH = registerBlock("dragon_teeth") { DragonTeethBlock() }
     @JvmField val REFORGING_TABLE = registerBlock("reforging_table") { ReforgingTableBlock() }
     @JvmField val RESONANCE_BASE = registerBlock("resonance_base") { ResonanceBaseBlock() }
@@ -64,6 +66,8 @@ object ModBlocks {
     @JvmField val VEHICLE_ASSEMBLING_TABLE = registerBlock("vehicle_assembling_table") { VehicleAssemblingTableBlock() }
     @JvmField val BLUEPRINT_RESEARCH_TABLE = registerBlock("blueprint_research_table") { BlueprintResearchTableBlock() }
     @JvmField val TRIPOD = registerBlock("tripod") { TripodBlock() }
+    @JvmField val ITEM_DISPLAY_BOARD = registerBlock("item_display_board") { ItemDisplayBoardBlock() }
+    @JvmField val SHELF = registerBlock("shelf") { ShelfBlock() }
     // @formatter:on
 
     fun registerBlock(name: String, block: () -> Block): DeferredHolder<Block, out Block> {

@@ -26,6 +26,7 @@ class ModSoundProvider(output: PackOutput, existingFileHelper: ExistingFileHelpe
     SoundDefinitionsProvider(output, Mod.MODID, existingFileHelper) {
 
     override fun registerSounds() {
+        root("flashbang_burst", "flashbang_ringing")
         // ==================== 杂项 ====================
         // -------------------- sounds 根目录 --------------------
         root(
@@ -180,6 +181,17 @@ class ModSoundProvider(output: PackOutput, existingFileHelper: ExistingFileHelpe
             subtitle = EXPLOSION_SUBTITLE,
         )
 
+        register(
+            "nuke_explosion_close", "explosion/nuke_explosion_close_01", "explosion/nuke_explosion_close_02",
+            "explosion/nuke_explosion_close_03", subtitle = EXPLOSION_SUBTITLE,
+        )
+        register(
+            "nuke_explosion_far", "explosion/nuke_explosion_far_01", "explosion/nuke_explosion_far_02",
+            "explosion/nuke_explosion_far_03", subtitle = EXPLOSION_SUBTITLE,
+        )
+        register(
+            "nuke_explosion_very_far", "explosion/nuke_explosion_very_far", subtitle = EXPLOSION_SUBTITLE)
+
         // -------------------- gpws --------------------
         group("gpws", "pull_up", "sink_rate", "terrain", "terrain_ahead", "too_low_gear", "too_low_terrain")
 
@@ -270,6 +282,11 @@ class ModSoundProvider(output: PackOutput, existingFileHelper: ExistingFileHelpe
         group(
             "gun/ak_47", "ak_47_fire_1p", "ak_47_fire_1p_s", "ak_47_fire_3p", "ak_47_fire_3p_s", "ak_47_far",
             "ak_47_veryfar", "ak_47_mag_in", "ak_47_mag_out", "ak_47_bolt",
+        )
+
+        // -------------------- gun/a_762 --------------------
+        group(
+            "gun/a_762", "a_762_fire_1p", "a_762_fire_3p", "a_762_fire_1p_s", "a_762_fire_3p_s",
         )
 
         // -------------------- gun/aurelia_sceptre --------------------

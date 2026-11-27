@@ -112,6 +112,28 @@ public class ModRenderTypes extends RenderType {
         return SCOPE_RETICLE_MESH.apply(location);
     }
 
+    private record SightReticleKey(ResourceLocation texture, VertexFormat.Mode mode, boolean illuminated) {}
+
+    private static final Function<SightReticleKey, RenderType> SIGHT_RETICLE = Util.memoize(key ->
+            create("sight_reticle_" + key.mode + "_" + key.illuminated,
+                    DefaultVertexFormat.NEW_ENTITY, key.mode, 256, false, true,
+                    CompositeState.builder()
+                    .setShaderState(key.illuminated ? SCOPE_RETICLE_SHADER : RENDERTYPE_ENTITY_TRANSLUCENT_SHADER)
+                    .setTextureState(new TextureStateShard(key.texture, false, false))
+                    .setTransparencyState(TRANSLUCENT_TRANSPARENCY)
+                    .setCullState(NO_CULL)
+                    .setLightmapState(key.illuminated ? NO_LIGHTMAP : LIGHTMAP)
+                    .setOverlayState(key.illuminated ? NO_OVERLAY : OVERLAY)
+                    .setDepthTestState(NO_DEPTH_TEST)
+                    .setWriteMaskState(COLOR_WRITE)
+                    .createCompositeState(false)));
+
+    /** Caller disables depth testing; these materials never enable it or write reticle depth. */
+    public static RenderType sightReticle(ResourceLocation texture, boolean mesh, boolean illuminated) {
+        return SIGHT_RETICLE.apply(new SightReticleKey(texture,
+                mesh ? VertexFormat.Mode.TRIANGLES : VertexFormat.Mode.QUADS, illuminated));
+    }
+
     public static final Function<ResourceLocation, RenderType> ILLUMINATED = Util.memoize((location) -> {
         TextureStateShard shard = new RenderStateShard.TextureStateShard(location, false, false);
         RenderType.CompositeState state = RenderType.CompositeState.builder().setTextureState(shard)
@@ -167,19 +189,17 @@ public class ModRenderTypes extends RenderType {
     public static final Function<ResourceLocation, RenderType> MUZZLE_FLASH_TYPE = Util.memoize((location) -> {
         TextureStateShard shard = new TextureStateShard(location, false, false);
         CompositeState state = RenderType.CompositeState.builder()
-                // 关键：使用位置-颜色-贴图着色器
-                .setShaderState(new RenderStateShard.ShaderStateShard(GameRenderer::getPositionTexColorShader))
-                // 启用半透明混合
+                // Iris routes this shader through its full-bright entity program.
+                .setShaderState(RENDERTYPE_ENTITY_TRANSLUCENT_EMISSIVE_SHADER)
                 .setTransparencyState(TEST_TRANSPARENCY)
-                // 绑定贴图（替换为你的路径）
+                .setCullState(RenderStateShard.NO_CULL)
                 .setTextureState(shard)
-                // 禁用光照和覆盖颜色
                 .setLightmapState(RenderStateShard.NO_LIGHTMAP)
-                .setOverlayState(RenderStateShard.NO_OVERLAY)
-                // 深度测试配置
-                .setWriteMaskState(RenderStateShard.COLOR_WRITE)   // 允许颜色写入
+                // Match entityTranslucentEmissive's overlay sampler; vertices use NO_OVERLAY.
+                .setOverlayState(RenderStateShard.OVERLAY)
+                .setWriteMaskState(RenderStateShard.COLOR_WRITE)
                 .createCompositeState(false);
-        return RenderType.create("muzzle_flash", DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS, 256, false, true, state);
+        return RenderType.create("muzzle_flash", DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS, 256, false, true, state);
     });
 
     public static final Function<ResourceLocation, RenderType> TOW_CHAIN = Util.memoize((location) -> {

@@ -2,10 +2,11 @@ package com.atsuishio.superbwarfare.config.server
 
 import com.atsuishio.superbwarfare.config.SERVER_CONFIG
 import com.atsuishio.superbwarfare.config.buildServerConfig
+import net.minecraft.world.entity.Entity
+import net.minecraft.world.entity.player.Player
 import net.neoforged.neoforge.common.ModConfigSpec
 
 object GunConfig {
-
     @JvmField
     val FREE_ATTACHMENT_MODE = buildServerConfig {
         push("gun")
@@ -20,6 +21,13 @@ object GunConfig {
         comment("Set true to allow every gun to use every registered attachment of every slot, ignoring its AvailableAttachments (implies free_attachment_mode)")
         comment("是否开启完全自由改装模式：任意枪械都能安装全部槽位已注册的配件，即使枪械数据里没有声明（蕴含自由改装模式）")
         define("fully_free_attachment_mode", false)
+    }
+
+    @JvmField
+    val UNRESTRICTED_MODIFICATION = buildServerConfig {
+        comment("Set true to let players in any game mode install gun attachments without inventory items; removing or replacing attachments returns no items")
+        comment("是否允许非创造模式玩家像创造模式一样自由装卸枪械配件：装配件不需要背包里有对应物品、卸下或替换不返还物品。")
+        define("unrestricted_modification", false)
     }
 
     @JvmField
@@ -40,7 +48,14 @@ object GunConfig {
     val PERK_SLOT_UNLOCK_LEVELS = buildServerConfig {
         comment("Weapon levels required for each additional Perk slot of each type in advanced reforging; 0 unlocks all slots. Creative players are unrestricted")
         comment("高级重塑中，每种模组默认有1个槽位，每提升指定枪械等级再开放1个；设为0全部开放，创造模式不受限制")
-        defineInRange("perk_slot_unlock_levels", 10, 0, Int.MAX_VALUE).also { pop() }
+        defineInRange("perk_slot_unlock_levels", 10, 0, Int.MAX_VALUE)
+    }
+
+    @JvmField
+    val HARVEST_PROGRESS_TICKS = buildServerConfig {
+        comment("Ticks to retain melee harvest progress since the last hit.")
+        comment("近战挖掘进度在最后一次命中后保留的刻数")
+        defineInRange("harvest_progress_ticks", 60, 1, 1200).also { pop() }
     }
 
     @JvmStatic
@@ -61,6 +76,17 @@ object GunConfig {
     @JvmStatic
     val fullyFreeAttachmentMode: Boolean
         get() = configValue(FULLY_FREE_ATTACHMENT_MODE)
+
+    @JvmStatic
+    val unrestrictedModification: Boolean
+        get() = configValue(UNRESTRICTED_MODIFICATION)
+
+    /** 只放宽配件的持有、消耗与返还要求，兼容范围和模组规则仍由各自的配置控制。 */
+    @JvmStatic
+    fun isUnrestrictedModification(player: Entity?): Boolean {
+        if (unrestrictedModification) return player != null
+        return player is Player && player.isCreative
+    }
 
     private fun configValue(value: ModConfigSpec.BooleanValue): Boolean =
         if (SERVER_CONFIG.isLoaded) value.get() else false

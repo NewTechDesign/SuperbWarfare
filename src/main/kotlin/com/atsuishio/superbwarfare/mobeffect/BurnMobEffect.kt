@@ -7,13 +7,13 @@ import com.atsuishio.superbwarfare.network.message.receive.ClientIndicatorMessag
 import com.atsuishio.superbwarfare.tools.forceHurt
 import com.atsuishio.superbwarfare.tools.sendPacket
 import net.minecraft.core.registries.Registries
-import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.sounds.SoundSource
 import net.minecraft.world.damagesource.DamageSource
 import net.minecraft.world.damagesource.DamageTypes
 import net.minecraft.world.effect.MobEffect
 import net.minecraft.world.effect.MobEffectCategory
+import net.minecraft.world.entity.AreaEffectCloud
 import net.minecraft.world.entity.LivingEntity
 import net.neoforged.bus.api.SubscribeEvent
 import net.neoforged.fml.common.EventBusSubscriber
@@ -37,12 +37,9 @@ object BurnMobEffect : MobEffect(MobEffectCategory.HARMFUL, -12708330) {
         )
         entity.invulnerableTime = 0
 
-        val level = attacker?.level() ?: return false
-        val player = attacker as? ServerPlayer ?: return false
-        if (level is ServerLevel) {
-            level.playSound(null, player.blockPosition(), ModSounds.INDICATION.get(), SoundSource.VOICE, 1f, 1f)
-
-            player.sendPacket(ClientIndicatorMessage(0, 5))
+        if (attacker is ServerPlayer) {
+            attacker.serverLevel().playSound(null, attacker.blockPosition(), ModSounds.INDICATION.get(), SoundSource.VOICE, 1f, 1f)
+            attacker.sendPacket(ClientIndicatorMessage(0, 5))
         }
         return true
     }
@@ -59,18 +56,19 @@ object BurnMobEffect : MobEffect(MobEffectCategory.HARMFUL, -12708330) {
             return
         }
 
+        val source = event.effectSource
+        val attacker = if (source is AreaEffectCloud) source.owner else source as? LivingEntity
         living.forceHurt(
             DamageSource(
                 living.level().registryAccess().registryOrThrow(Registries.DAMAGE_TYPE)
                     .getHolderOrThrow(DamageTypes.IN_FIRE),
-                event.effectSource
+                attacker ?: source
             ), 0.6f + (0.3f * instance.amplifier)
         )
         living.invulnerableTime = 0
 
-        val source = event.effectSource
-        if (source is LivingEntity) {
-            living.persistentData.putInt(TAG_ATTACKER, source.id)
+        if (attacker != null) {
+            living.persistentData.putInt(TAG_ATTACKER, attacker.id)
         }
     }
 

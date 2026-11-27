@@ -53,6 +53,7 @@ class ModBlockTagProvider(
             ModBlocks.DEEPSLATE_SILVER_ORE.get(),
             ModBlocks.SILVER_BLOCK.get(),
             ModBlocks.JUMP_PAD.get(),
+            ModBlocks.BOOBY_TRAP.get(),
             ModBlocks.CONTAINER.get(),
             ModBlocks.CHARGING_STATION.get(),
             ModBlocks.WEAPON_REPAIR_STATION.get(),
@@ -80,7 +81,9 @@ class ModBlockTagProvider(
             ModBlocks.NITER_ORE.get(),
             ModBlocks.DEEPSLATE_NITER_ORE.get(),
             ModBlocks.NITER_BLOCK.get(),
-            ModBlocks.TRIPOD.get()
+            ModBlocks.TRIPOD.get(),
+            ModBlocks.ITEM_DISPLAY_BOARD.get(),
+            ModBlocks.SHELF.get()
         )
         this.tag(BlockTags.MINEABLE_WITH_SHOVEL).add(ModBlocks.SANDBAG.get())
 

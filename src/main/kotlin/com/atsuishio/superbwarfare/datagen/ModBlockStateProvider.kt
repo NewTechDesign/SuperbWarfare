@@ -1,12 +1,16 @@
 package com.atsuishio.superbwarfare.datagen
 
 import com.atsuishio.superbwarfare.Mod
+import com.atsuishio.superbwarfare.block.BoobyTrapBlock
+import com.atsuishio.superbwarfare.block.ItemDisplayBoardBlock
 import com.atsuishio.superbwarfare.init.ModBlocks
+import net.minecraft.core.Direction
 import net.minecraft.core.registries.BuiltInRegistries
 import net.minecraft.data.PackOutput
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.world.level.block.Block
 import net.neoforged.neoforge.client.model.generators.BlockStateProvider
+import net.neoforged.neoforge.client.model.generators.ConfiguredModel
 import net.neoforged.neoforge.client.model.generators.ModelFile.UncheckedModelFile
 import net.neoforged.neoforge.common.data.ExistingFileHelper
 import net.neoforged.neoforge.registries.DeferredHolder
@@ -15,11 +19,21 @@ class ModBlockStateProvider(output: PackOutput, exFileHelper: ExistingFileHelper
     BlockStateProvider(output, Mod.MODID, exFileHelper) {
     override fun registerStatesAndModels() {
         horizontalBlock(ModBlocks.BARBED_WIRE.get(), UncheckedModelFile(modLoc("block/barbed_wire")))
+        simpleBlock(ModBlocks.HIGH_ENERGY_EXPLOSIVES_BLOCK.get(), models().cubeBottomTop(
+            "high_energy_explosives_block", modLoc("block/high_energy_explosives_block_side"),
+            modLoc("block/high_energy_explosives_block_bottom"), modLoc("block/high_energy_explosives_block_top")))
+        val boobyTrapOn = models().cubeAll("booby_trap", modLoc("block/booby_trap"))
+        val boobyTrapOff = models().cubeAll("booby_trap_off", modLoc("block/booby_trap_off"))
+        getVariantBuilder(ModBlocks.BOOBY_TRAP.get()).forAllStates { state ->
+            ConfiguredModel.builder().modelFile(if (state.getValue(BoobyTrapBlock.OFF)) boobyTrapOff else boobyTrapOn).build()
+        }
         horizontalBlock(ModBlocks.JUMP_PAD.get(), UncheckedModelFile(modLoc("block/jump_pad")))
         horizontalBlock(ModBlocks.REFORGING_TABLE.get(), UncheckedModelFile(modLoc("block/reforging_table")))
         horizontalBlock(ModBlocks.WEAPON_REPAIR_STATION.get(), UncheckedModelFile(modLoc("block/weapon_repair_station")))
         simpleBlock(ModBlocks.RESONANCE_BASE.get(), models().getBuilder("resonance_base")
             .texture("particle", mcLoc("block/gray_glazed_terracotta")))
+        simpleBlock(ModBlocks.SHELF.get(), models().cubeAll("shelf", modLoc("bedrock/block/shelf_top"))
+            .texture("particle", mcLoc("block/white_concrete")))
         horizontalBlock(ModBlocks.CONTAINER.get(), UncheckedModelFile(modLoc("block/container")))
         horizontalBlock(ModBlocks.SMALL_CONTAINER.get(), UncheckedModelFile(modLoc("block/small_container")))
         horizontalBlock(ModBlocks.LUCKY_CONTAINER.get(), UncheckedModelFile(modLoc("block/container")))
@@ -137,6 +151,23 @@ class ModBlockStateProvider(output: PackOutput, exFileHelper: ExistingFileHelper
 
         simpleBlock(ModBlocks.FUMO_25.get(), UncheckedModelFile(modLoc("block/fumo_25")))
         simpleBlock(ModBlocks.TRIPOD.get(), UncheckedModelFile(modLoc("block/tripod")))
+
+        getVariantBuilder(ModBlocks.ITEM_DISPLAY_BOARD.get()).forAllStatesExcept({ state ->
+            val facing = state.getValue(ItemDisplayBoardBlock.FACING)
+            val (rotationX, rotationY) = when (facing) {
+                Direction.DOWN -> 90 to 0
+                Direction.UP -> 270 to 0
+                Direction.NORTH -> 0 to 0
+                Direction.EAST -> 0 to 90
+                Direction.SOUTH -> 0 to 180
+                Direction.WEST -> 0 to 270
+            }
+            ConfiguredModel.builder()
+                .modelFile(UncheckedModelFile(modLoc("block/item_display_board")))
+                .rotationX(rotationX)
+                .rotationY(rotationY)
+                .build()
+        }, ItemDisplayBoardBlock.ROTATION)
     }
 
     private fun name(block: Block): String {

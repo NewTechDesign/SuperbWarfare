@@ -7,9 +7,11 @@ import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoDisplayRenderer
 import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoDisplayRenderer.AmmoBarState
 import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoDisplayRenderer.AmmoText
 import com.atsuishio.superbwarfare.client.renderer.ammo.AmmoReadout
+import com.atsuishio.superbwarfare.client.renderer.gun.StaticGunRenderer
 import com.atsuishio.superbwarfare.client.renderer.scope.ScopeLensPostProcessor
 import com.atsuishio.superbwarfare.client.renderer.scope.ScopeLensShader
 import com.atsuishio.superbwarfare.client.renderer.scope.ScopeStencilRenderHelper
+import com.atsuishio.superbwarfare.client.renderer.scope.ScopeThermalRenderer
 import com.atsuishio.superbwarfare.compat.shader.ShaderCompat
 import com.atsuishio.superbwarfare.config.client.DisplayConfig
 import com.atsuishio.superbwarfare.data.attachment.ScopeMode
@@ -33,6 +35,7 @@ import org.joml.Matrix4f
 import org.joml.Vector3f
 import org.lwjgl.opengl.GL11
 import java.util.regex.Pattern
+import kotlin.math.pow
 
 class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
     internal val instance: TreeModelInstance = baseModel.createInstance()
@@ -62,6 +65,7 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
     private val modeScopeBodyGroups = mutableMapOf<Int, List<Int>>()
     private val divisionGroups = mutableMapOf<String, List<Int>>()
     private val bindGlobalTransformCache = mutableMapOf<String, Matrix4f?>()
+    private val bindInstance: TreeModelInstance by lazy { baseModel.createInstance() }
     private val illuminatedBoneIndices: IntArray = baseModel.bones()
         .asSequence()
         .filter { it.name().endsWith(ILLUMINATED_SUFFIX) }
@@ -184,14 +188,9 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
     }
 
     fun getBindGlobalTransform(boneName: String): Matrix4f? {
-        bindGlobalTransformCache[boneName]?.let { return it }
+        if (bindGlobalTransformCache.containsKey(boneName)) return bindGlobalTransformCache[boneName]
         val index = baseModel.getIndex(boneName)
-        if (index < 0) return null
-
-        val currentPose = instance.pose
-        instance.resetPose()
-        val transform = Matrix4f(instance.getGlobalTransform(index))
-        instance.applyPose(currentPose)
+        val transform = if (index >= 0) Matrix4f(bindInstance.getGlobalTransform(index)) else null
         bindGlobalTransformCache[boneName] = transform
         return transform
     }
@@ -239,7 +238,9 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
         companionSightMode: ScopeMode? = null,
         readout: AmmoReadout = AmmoReadout()
     ) {
+        if (StaticGunRenderer.renderAttachment(bufferSource, this, poseStack, texture, companionSightMode)) return
         val hiddenOculars = if (companionSightMode != null) ocularIndicesFor(companionSightMode) else emptyList()
+        StaticGunRenderer.registerMaterials(bufferSource, texture, readout)
         val originalOcularVisibility = BooleanArray(hiddenOculars.size)
         for (i in hiddenOculars.indices) {
             val bone = instance.getBone(hiddenOculars[i])
@@ -293,6 +294,23 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
     fun hasLensSurface(info: ScopeMode): Boolean {
         val index = shaderBoneIndex(info)
         return index >= 0 && surfaceRadius(index) > 1.0e-4f
+    }
+
+    /**
+     * 热成像瞄具没有可用实体镜片时的"镜片补偿"倍数。
+     *
+     * `LENS_ZOOM_RATIO` 会把世界缩放拆成「世界 `zoom^(1-ratio)` + 镜片补偿 `zoom^ratio`」，
+     * 普通镜片由 `rendertype_scope_lens` 在镜片着色器里补；没有实体镜片的热成像瞄具只能在
+     * 热成像面（`rendertype_scope_thermal`）里补，否则世界、热源遮罩都停在 `zoom^(1-ratio)`，
+     * 与镜内准星/视野的放大不一致，看上去就是"遮罩没跟着放大、错位"。
+     */
+    private fun thermalLensMagnification(info: ScopeMode): Float {
+        val ratio = DisplayConfig.LENS_ZOOM_RATIO.get()
+        if (ratio <= 0.0) return 1f
+        if (!hasLensSurface(info)) return 1f
+        val progress = ClientEventHandler.aimingProgress(ClientEventHandler.zoomTime)
+        val zoom = 1.0 + progress * (ClientEventHandler.customZoom.coerceAtLeast(1.0) - 1.0)
+        return zoom.pow(ratio).toFloat()
     }
 
     fun renderWithStencil(
@@ -370,23 +388,75 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
         RenderSystem.clear(GL11.GL_STENCIL_BUFFER_BIT, Minecraft.ON_OSX)
 
         renderOcularStencil(poseStack, bufferSource, quadType, triangleType, light, false, info)
-        renderDivisionOnly(
-            poseStack,
-            bufferSource,
-            texture,
-            quadType,
-            triangleType,
-            light,
-            info,
-            divisionIndices(info),
-            texts
-        )
+        // Ordinary sight reticles are drawn once, after the gun and other attachments.
+        // Thermal sights retain their existing deferred lens/reticle composition.
+        if (info.thermal) {
+            renderDivisionOnly(
+                poseStack, bufferSource, texture, quadType, triangleType, light,
+                info, divisionIndices(info), texts
+            )
+        }
 
         RenderSystem.stencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
         ScopeStencilRenderHelper.disableItemEntityStencilTest()
 
         for (bodyIndex in scopeBodyIndices(info)) {
             renderBoneImmediate(bodyIndex, poseStack, bufferSource, quadType, triangleType, light)
+        }
+    }
+
+    /** Draw ordinary SIGHT divisions over model depth, still clipped by the original lens stencil. */
+    fun renderSightReticleOverlay(
+        poseStack: PoseStack,
+        bufferSource: MultiBufferSource.BufferSource,
+        texture: ResourceLocation,
+        light: Int,
+        info: ScopeMode,
+        readout: AmmoReadout
+    ) {
+        if (!info.isSight() || info.thermal || ClientEventHandler.zoomTime < DIVISION_MIN_ZOOM) return
+        val divisions = divisionIndices(info)
+        if (divisions.isEmpty()) return
+        // Both Oculus batching and AR must finish model draws before the foreground pass starts.
+        if (!ShaderCompat.endBatch(bufferSource)) bufferSource.endBatch()
+        val quadType = RenderType.entityTranslucent(texture)
+        val triangleType = BedrockModelRenderTypes.polyMeshCutout(texture)
+        val foreground = MultiBufferSource { type ->
+            val illuminated = type == ModRenderTypes.scopeReticle(texture) ||
+                    type == ModRenderTypes.scopeReticleMesh(texture)
+            bufferSource.getBuffer(ModRenderTypes.sightReticle(
+                texture, type.mode() == VertexFormat.Mode.TRIANGLES, illuminated
+            ))
+        }
+        val texts = ammo.buildTexts(
+            readout.texts, readout.count, readout.progress, readout.range, readout.heat, readout.zoom,
+            readout.heatShots, readout.heatShotsMax
+        )
+        ScopeStencilRenderHelper.enableItemEntityStencilTest()
+        RenderSystem.stencilMask(0)
+        RenderSystem.stencilOp(GL11.GL_KEEP, GL11.GL_KEEP, GL11.GL_KEEP)
+        RenderSystem.disableDepthTest()
+        RenderSystem.depthMask(false)
+        try {
+            withShaderBonesHidden {
+                for ((i, division) in divisions.withIndex()) {
+                    RenderSystem.stencilFunc(GL11.GL_EQUAL, i + 1, 0xFF)
+                    renderDivisionVertices(division, poseStack, foreground, texture, quadType, triangleType, light)
+                    if (!ShaderCompat.endBatch(bufferSource)) bufferSource.endBatch()
+                    for (text in texts) {
+                        if (text.divisionIndex == division) {
+                            ammo.renderText(text, poseStack, bufferSource, foreground = true)
+                        }
+                    }
+                    if (!ShaderCompat.endBatch(bufferSource)) bufferSource.endBatch()
+                }
+            }
+        } finally {
+            RenderSystem.depthMask(true)
+            RenderSystem.enableDepthTest()
+            RenderSystem.stencilMask(0xFF)
+            RenderSystem.stencilFunc(GL11.GL_ALWAYS, 0, 0xFF)
+            ScopeStencilRenderHelper.disableItemEntityStencilTest()
         }
     }
 
@@ -510,7 +580,8 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
                 RenderSystem.stencilFunc(GL11.GL_EQUAL, i + 1, 0xFF)
                 val division = divisions.getOrNull(i)
                 if (info.thermal && ScopeLensPostProcessor.deferThermalSight(
-                        i + 1, info.thermalBackgroundColor?.get(), info.thermalEntityColor?.get()
+                        i + 1, info.thermalBackgroundColor?.get(), info.thermalEntityColor?.get(),
+                        thermalLensMagnification(info)
                     ) { deferred ->
                         if (division != null) {
                             renderDivisionVertices(division, poseStack, deferred, texture, quadType, triangleType, light)
@@ -584,9 +655,8 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
         RenderSystem.depthMask(false)
 
         val progress = ClientEventHandler.aimingProgress(ClientEventHandler.zoomTime)
-        val rad = 80f * info.viewRadiusModifier * progress
-        val window = Minecraft.getInstance().window
-        val projectionMatrix = Matrix4f(RenderSystem.getProjectionMatrix())
+        // Match the 1.20 aperture: a radius of 80 at view depth 90, independent of GUI scale.
+        val radiusPerDepth = (80f / 90f) * info.viewRadiusModifier * progress
         val modelViewMatrix = Matrix4f(RenderSystem.getModelViewMatrix())
 
         val modelViewStack = RenderSystem.getModelViewStack()
@@ -602,10 +672,7 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
             val depth = -ocularCenter.z()
             if (!depth.isFinite() || depth <= 0f) continue
 
-            val radiusX = rad * depth * 2f /
-                    (projectionMatrix.m00() * window.guiScaledWidth)
-            val radiusY = rad * depth * 2f /
-                    (projectionMatrix.m11() * window.guiScaledHeight)
+            val radius = radiusPerDepth * depth
 
             val builder = Tesselator.getInstance().begin(
                 VertexFormat.Mode.TRIANGLE_FAN,
@@ -619,8 +686,8 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
                 val sin = Mth.sin(angle.toFloat())
                 val cos = Mth.cos(angle.toFloat())
                 builder.addVertex(
-                    ocularCenter.x() + cos * radiusX,
-                    ocularCenter.y() + sin * radiusY,
+                    ocularCenter.x() + cos * radius,
+                    ocularCenter.y() + sin * radius,
                     ocularCenter.z()
                 )
                     .setColor(255, 255, 255, 255)
@@ -666,7 +733,8 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
                 RenderSystem.stencilFunc(GL11.GL_EQUAL, b, 0xFF)
                 if (info.thermal && lensSurface == null) {
                     if (ScopeLensPostProcessor.deferThermalSight(
-                            b, info.thermalBackgroundColor?.get(), info.thermalEntityColor?.get()
+                            b, info.thermalBackgroundColor?.get(), info.thermalEntityColor?.get(),
+                            thermalLensMagnification(info)
                         ) { deferred ->
                             if (divisionDue) {
                                 withShaderBonesHidden {
@@ -689,7 +757,9 @@ class BedrockAttachmentModel(internal val baseModel: TreeBedrockModel) {
                         1f
                     }
                     val tint = info.lensTint
-                    if (ShaderCompat.isShaderPackActive() || info.thermal) {
+                    // Full-screen thermal must be composited before the lens resamples the scene,
+                    // otherwise only the world is magnified and the heat mask stays unzoomed.
+                    if (ShaderCompat.isShaderPackActive() || info.thermal || ScopeThermalRenderer.isFullScreenActive()) {
                         if (ScopeLensPostProcessor.defer(
                                 b, lensSurface, info.lensEdgeWidth, magnification,
                                 tint?.get() ?: 0xFFFFFF,

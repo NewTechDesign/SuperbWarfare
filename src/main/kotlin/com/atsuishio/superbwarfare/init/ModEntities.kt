@@ -4,6 +4,8 @@ import com.atsuishio.superbwarfare.Mod
 import com.atsuishio.superbwarfare.config.server.SpawnConfig
 import com.atsuishio.superbwarfare.entity.living.*
 import com.atsuishio.superbwarfare.entity.misc.CatapultShuttleEntity
+import com.atsuishio.superbwarfare.entity.misc.FoodRainItemEntity
+import com.atsuishio.superbwarfare.entity.misc.HighEnergyExplosivesEntity
 import com.atsuishio.superbwarfare.entity.projectile.*
 import com.atsuishio.superbwarfare.entity.vehicle.*
 import com.atsuishio.superbwarfare.entity.vehicle.base.AutoAimableEntity
@@ -62,6 +64,12 @@ object ModEntities {
 
     // Misc Entities
     @JvmField
+    val HIGH_ENERGY_EXPLOSIVES = register(
+        "high_energy_explosives",
+        misc(::HighEnergyExplosivesEntity).setTrackingRange(64).setUpdateInterval(1).fireImmune().sized(0.98f, 0.98f)
+    )
+
+    @JvmField
     val FLARE_DECOY = register(
         "flare_decoy",
         misc(::FlareDecoyEntity).setTrackingRange(64).setUpdateInterval(1).noSave().sized(1f, 1f)
@@ -83,7 +91,7 @@ object ModEntities {
     @JvmField
     val SMOKE_DECOY = register(
         "smoke_decoy",
-        misc(::SmokeDecoyEntity).setTrackingRange(64).setUpdateInterval(1).noSave().sized(5.5f, 5.5f)
+        misc(::SmokeDecoyEntity).setTrackingRange(64).setUpdateInterval(1).noSave().fireImmune().sized(5.5f, 5.5f)
     )
 
     @JvmField
@@ -97,6 +105,9 @@ object ModEntities {
         "blu_43",
         misc(::Blu43Entity).setTrackingRange(32).setUpdateInterval(1).sized(0.12f, 0.05f)
     )
+
+    @JvmField
+    val SEA_MINE = register("sea_mine", misc(::SeaMineEntity).setTrackingRange(64).setUpdateInterval(2).sized(0.75f, 0.75f))
 
     @JvmField
     val TM_62 = register("tm_62", misc(::Tm62Entity).setTrackingRange(32).setUpdateInterval(1).sized(0.5f, 0.15f))
@@ -120,6 +131,13 @@ object ModEntities {
     val EDD = register("edd", misc(::EDDEntity).setTrackingRange(10).eyeHeight(0f).setUpdateInterval(Int.MAX_VALUE).sized(0.5f, 0.5f))
 
     // Projectiles
+    @JvmField
+    val HIGH_ENERGY_LASER = register(
+        "high_energy_laser",
+        misc(::HighEnergyLaserEntity).setTrackingRange(160).setUpdateInterval(1)
+            .noSave().noSummon().fireImmune().sized(0.1f, 0.1f)
+    )
+
     @JvmField
     val REFORGING_LASER = register(
         "reforging_laser",
@@ -204,6 +222,15 @@ object ModEntities {
         register("m18_smoke_grenade", fastProjectile(::M18SmokeGrenadeEntity, true).sized(0.3f, 0.3f))
 
     @JvmField
+    val M84_STUN_GRENADE = register("m84_stun_grenade", fastProjectile(::M84StunGrenadeEntity, true).sized(0.3f, 0.3f))
+
+    @JvmField
+    val DECOY_GRENADE = register("decoy_grenade", fastProjectile(::DecoyGrenadeEntity, true).sized(0.25f, 0.25f))
+
+    @JvmField
+    val MOLOTOV = register("molotov", fastProjectile(::MolotovEntity, true).sized(0.25f, 0.25f))
+
+    @JvmField
     val SMOKE_GUN_GRENADE =
         register("smoke_gun_grenade", fastProjectile(::SmokeGunGrenadeEntity, true).sized(0.5f, 0.5f))
 
@@ -266,6 +293,18 @@ object ModEntities {
 
     @JvmField
     val BOR_57 = register("bor_57", fastProjectile(::Bor57Entity).sized(0.8f, 0.8f))
+
+    @JvmField
+    val FOOD_RAIN_ATOM_BOMB = register("food_rain_atom_bomb", fastProjectile(::FoodRainAtomBombEntity).sized(0.8f, 0.8f))
+
+    @JvmField
+    val FOOD_RAIN_ITEM = register("food_rain_item",
+        misc(::FoodRainItemEntity).sized(0.25f, 0.25f).setTrackingRange(32).setUpdateInterval(20))
+
+    @JvmField
+    val SMELLY_BOY = register("smelly_boy", fastProjectile<NuclearBombEntity>({ type, level ->
+        NuclearBombEntity(type, level, animated = false)
+    }).sized(0.8f, 0.8f))
 
     // Vehicles
     // Turrets

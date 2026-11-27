@@ -1,0 +1,63 @@
+{
+  "SlotIcon": "superbwarfare:textures/item/fire_axe_icon.png",
+  "UseCustomSprintAnimation": true,
+  "Animation": {
+    "Idle": "animation.fire_axe.idle",
+    "Melee": "animation.fire_axe.melee_1",
+    "Run": "animation.fire_axe.sprint",
+    "Edit": "animation.fire_axe.edit"
+  },
+  "Model": {
+    "Animation": "superbwarfare:animations/bedrock/gun/fire_axe.animation.json",
+    "Model": "superbwarfare:models/bedrock/gun/fire_axe.geo.json",
+    "Texture": "superbwarfare:textures/bedrock/gun/fire_axe.png"
+  },
+  "ItemDisplay": {
+    "firstperson_righthand": {
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "firstperson_lefthand": {
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "thirdperson_righthand": {
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "thirdperson_lefthand": {
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "ground": {
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "fixed": {
+      "scale": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    }
+  },
+  "Sponsor": {
+    "Name": "丿小年糕丿",
+    "Color": "0x7DEA79"
+  }
+}

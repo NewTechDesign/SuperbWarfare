@@ -73,12 +73,12 @@
       "#superbwarfare:attachment/charm"
     ],
     "LowerRail": [
-      "superbwarfare:lower_rail_bipod",
-      "superbwarfare:peq_15",
-      "superbwarfare:pistol_laser"
+      "superbwarfare:lower_rail_bipod"
     ]
   },
   "AvailablePerks": [
+    "superbwarfare:practice_makes_perfect",
+    "superbwarfare:crushing_force",
     "superbwarfare:vorpal_weapon",
     "superbwarfare:soul_reaver",
     "superbwarfare:fair_means",

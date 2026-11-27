@@ -3,15 +3,8 @@ package com.atsuishio.superbwarfare.data.gun
 import com.atsuishio.superbwarfare.capability.entity.InfiniteAmmoCapability
 import com.atsuishio.superbwarfare.config.server.GunConfig
 import com.atsuishio.superbwarfare.data.*
-import com.atsuishio.superbwarfare.data.attachment.AttachmentDefinition
-import com.atsuishio.superbwarfare.data.attachment.AttachmentSlots
-import com.atsuishio.superbwarfare.data.attachment.AttachmentZoom
-import com.atsuishio.superbwarfare.data.attachment.AvailableAttachments
-import com.atsuishio.superbwarfare.data.gun.GunData.Companion.BACKUP_AMMO_CACHE_TICKS
-import com.atsuishio.superbwarfare.data.gun.GunData.Companion.DATA_VERSION
+import com.atsuishio.superbwarfare.data.attachment.*
 import com.atsuishio.superbwarfare.data.gun.GunData.Companion.from
-import com.atsuishio.superbwarfare.data.gun.GunData.Companion.get
-import com.atsuishio.superbwarfare.data.gun.GunData.Companion.getDefault
 import com.atsuishio.superbwarfare.data.gun.GunProp.Companion.AMMO_CONSUMER
 import com.atsuishio.superbwarfare.data.gun.GunProp.Companion.AMMO_COST_PER_SHOOT
 import com.atsuishio.superbwarfare.data.gun.GunProp.Companion.AVAILABLE_FIRE_MODES
@@ -61,6 +54,7 @@ import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.util.Mth
 import net.minecraft.world.entity.Entity
+import net.minecraft.world.entity.ai.attributes.Attributes
 import net.minecraft.world.entity.player.Player
 import net.minecraft.world.item.Item
 import net.minecraft.world.item.ItemStack
@@ -69,6 +63,7 @@ import net.neoforged.neoforge.energy.IEnergyStorage
 import net.neoforged.neoforge.items.IItemHandler
 import java.util.*
 import java.util.function.Function
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
@@ -191,8 +186,13 @@ class GunData private constructor(
      */
     private var propertiesInvalidated: Boolean = false
 
-    /** Whether anything ever asked for a write, so [persist] cannot take its "never touched" shortcut. */
+    /** Whether this instance or a weapon sharing its tag can have state to write. */
     private var mutated: Boolean = false
+
+    /** Ensures the next [save] checks for changes written directly by installed sub-weapons. */
+    internal fun trackSharedTagChanges() {
+        mutated = true
+    }
 
     /**
      * Marks the cached computed properties stale.
@@ -507,7 +507,12 @@ class GunData private constructor(
                     attachmentJsonPropModifier.update(option.override)
                     attachmentJsonPropModifier.modifyProperty(pmcInstance)
                 }
-                instance.definition.modifyProperty(pmcInstance)
+                // 激光/手电关闭时，这件带激光的配件只保留 Weight 修改（见 AttachmentDefinition.modifyProperty）。
+                // 档位按**槽位**独立读取，同一把枪上多件发光配件互不影响。
+                val lightMode = AttachmentLightState.modeOf(this, instance.slot)
+                val includeNonWeight = instance.definition.laser == null ||
+                    lightMode == FlashlightMode.LASER
+                instance.definition.modifyProperty(pmcInstance, includeNonWeight)
             }
 
             // 3.5 某些槽位装上配件后，换弹方式按数据覆写（如装了瞄准镜就无法用弹夹装填）
@@ -1016,6 +1021,21 @@ class GunData private constructor(
     }
 
     /**
+     * 一次开火实际消耗多少 FE：按 [DefaultGunData.fuelPerAmmo] 把弹药单位折算成能量。
+     *
+     * 声明了换算比例的能量武器（`devotion` 这类「电量→发数」的枪）每发值
+     * `AmmoCostPerShoot * FuelPerAmmo` 电量，与它当前是弹匣型还是背包型无关 ——
+     * `背包连弹夹` 会把 `Magazine` 改成 0 让它直接吃背包能量，但一发该扣多少电不变。
+     * 没声明比例的纯能量枪 1 弹药单位就是 1 FE。
+     */
+    fun energyPerShot(): Int {
+        val cost = primaryAmmoCostPerShoot().coerceAtLeast(1)
+        val fuel = get(FUEL_PER_AMMO)
+        if (fuel <= 0) return cost
+        return min(cost.toLong() * fuel, Int.MAX_VALUE.toLong()).toInt()
+    }
+
+    /**
      * Calculates remaining shots possible before requiring a reload.
      *
      * @param entity the shooter entity.
@@ -1380,6 +1400,33 @@ class GunData private constructor(
 
     /** 近战基础距离：`player.getEntityReach()` 由调用方加上 */
     fun meleeRange(): Double = get(GunProp.MELEE_RANGE)
+
+    internal class MeleeSwingTiming(val duration: Int, val hitTicks: IntArray)
+
+    internal fun meleeSwingTiming(player: Player, index: Int, chargeStrike: Boolean, releaseStrike: Boolean): MeleeSwingTiming? {
+        val action = resolveMeleeAction(index)
+        val source = meleeActions()[index]
+        val charge = if (chargeStrike) get(GunProp.BAYONET_CHARGE) else null
+        val rpmMultiplier = get(GunProp.RPM_MULTIPLIER)
+        val weaponSpeed = if (rpmMultiplier.isFinite()) rpmMultiplier.coerceAtLeast(0.0) else 1.0
+        val playerSpeed = (player.getAttributeValue(Attributes.ATTACK_SPEED) / 4.0).coerceIn(1.0, 4.0)
+        val speed = if (chargeStrike) 1.0 else playerSpeed * weaponSpeed
+        if (speed <= 0.0) return null
+
+        fun scaledTicks(ticks: Int): Int = if (ticks <= 0) 0 else ceil(ticks / speed).toInt().coerceAtLeast(1)
+
+        val rawDuration = if (releaseStrike) source.releaseDuration ?: action.duration
+        else charge?.strikeDuration?.takeIf { it > 0 } ?: action.duration
+        val duration = scaledTicks(rawDuration).coerceAtLeast(1)
+        val chargeHitTime = charge?.strikeHitTime?.takeIf { it >= 0 }
+        val hitTimes = when {
+            releaseStrike -> source.releaseHitTime?.list?.takeIf { it.isNotEmpty() } ?: action.hitTimes
+            chargeHitTime != null -> listOf(chargeHitTime)
+            else -> action.hitTimes
+        }
+
+        return MeleeSwingTiming(duration, hitTimes.map { scaledTicks(it).coerceIn(0, duration - 1) }.sorted().toIntArray())
+    }
 
     /** Checks if weapon is a shotgun (projectile count > 1). */
     val isShotgun: Boolean
@@ -1786,7 +1833,16 @@ class GunData private constructor(
     fun copy(): GunData {
         // The copy re-decodes the state from the stack, so deferred writes have to land first.
         flush()
-        return GunData(this.stack.copy())
+        return from(stackStorage.copyStack(stack))
+    }
+
+    /** Builds a preview with the current state and a private copy of the remaining tag. */
+    fun previewWithoutAttachments(): GunData {
+        val preview = stackStorage.copyStack(stack)
+        val root = stackStorage.rootTag(preview)
+        root.remove(KEY_ATTACHMENTS)
+        stackStorage.writeRoot(preview, root)
+        return from(preview).also { it.updateLocal { state } }
     }
 
     // TODO Deprecated: temporary adaptation for Touhou Little Maid mod

@@ -13,6 +13,8 @@ object ModSounds {
 
     // @formatter:off
     @JvmField val SHOCK = register("shock")
+    @JvmField val FLASHBANG_BURST = register("flashbang_burst")
+    @JvmField val FLASHBANG_RINGING = register("flashbang_ringing")
     @JvmField val ELECTRIC = register("electric")
     @JvmField val MELEE_HIT = register("melee_hit")
 
@@ -40,6 +42,9 @@ object ModSounds {
     @JvmField val EPIC_EXPLOSION_CLOSE = register("epic_explosion_close")
     @JvmField val EPIC_EXPLOSION_FAR = register("epic_explosion_far")
     @JvmField val EPIC_EXPLOSION_VERY_FAR = register("epic_explosion_very_far")
+    @JvmField val NUKE_EXPLOSION_CLOSE = register("nuke_explosion_close")
+    @JvmField val NUKE_EXPLOSION_FAR = register("nuke_explosion_far")
+    @JvmField val NUKE_EXPLOSION_VERY_FAR = register("nuke_explosion_very_far")
     @JvmField val EXPLOSION_WATER = register("explosion_water")
     @JvmField val EXPLOSION_AIR = register("explosion_air")
 
